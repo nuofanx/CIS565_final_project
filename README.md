@@ -5,13 +5,13 @@
 
 # Changes:
 1. Modifed readme file to show the work to be done 
-<!--- 2. Wrote function interface for functions required
-3. Finished struct definitions --->
+2. Wrote function interface for functions required in run.h
+3. Finished struct definitions and memory allocation/deallocation functions in run.cu
 
 # TODO
-1. Write run.cu to support parallelization 
-    - [ ] define three structs Config, runStates, and transformerWeights, which contain dimension parameters, state parameters and weight parameters respectively 
-    - [ ] write GPU momory allocation and deallocation functions for each parameter in those structs
+1. Write run.cu to support parallelization
+    - [x] define three structs Config, runStates, and transformerWeights, which contain dimension parameters, state parameters and weight parameters respectively 
+    - [x] write GPU momory allocation and deallocation functions for each parameter in those structs
     - [ ] write initialization function that support random init or checkpoint read
     - [ ] write gpu version of transformer operations \
        i) rmsnorm \
