@@ -1,12 +1,31 @@
 # CIS565_final_project
-# Run instructions
-1. Compile command:
-2. Run command: 
+# basic explanation for llama2.cpp 
+https://github.com/RahulSChand/llama2.c-for-dummies
 
-# Changes:
+# Run instructions
+1. Compile command: 
+   on windows (): 
+   gcc -O3 -o run run.cpp 
+   on Mac:
+   clang++ -O3 -o run run.cpp  
+                    
+2. Run command:
+   Default cpu:
+   ./run.cpp 
+   CUDA (windows only)
+   ./run.cpp -gpu
+
+# Changes (until Oct.28):
 1. Modifed readme file to show the work to be done 
 2. Wrote function interface for functions required in run.h
 3. Finished struct definitions and memory allocation/deallocation functions in run.cu
+
+# Changes (until Oct.30):
+1. Added main code (done main structure to generate prompt, still need to add support for tokenizer loading, cpu/gpu running, timing)
+2. Wrote model and config loading code
+3. Added TODOs in run.cu for next time (neural net operations, and finishing up main function) 
+4. Slightly modified run.h to add struct declaration and shared weight argument 
+5. Added run instructions (not working at the moment) 
 
 # TODO
 1. Write run.cu to support parallelization
