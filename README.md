@@ -36,8 +36,11 @@ https://siboehm.com/articles/22/CUDA-MMM
    c. 2D Blocktiling (for increasing Arithmetic Intensity)
    d. Vectorize SMEM and GMEM Accesses (using vectorized SMEM loads)
    e. Warptiling (add another hierarchy of tiling)
-   The code is not finished, as this project will first focus on getting the code running and then implement speed improvements. The rest will be implemented if time is allowed.
 
+# Changes (until Nov.1)
+1. Added possible optimizations for neural net operations in readme   
+2. Wrote code for kernels calculating rotationary embedding and RMSNorm.
+  
 
 # TODO
 1. Write run.cu to support parallelization
@@ -67,3 +70,27 @@ https://siboehm.com/articles/22/CUDA-MMM
        iv) free gpu memory after the run 
      
 2. write weight quantization code 
+
+
+# Neural Net Operation Optimization that could be attempted 
+1. matmul operation 
+<!-- https://siboehm.com/articles/22/CUDA-MMM -->
+- Blocktiling
+- Vectorized SMEM and GMEM Access
+- Warptiling
+
+2. rotation embedding 
+splits the input tensors xq and xk into real and imaginary parts, reshapes freqs_cos and freqs_sin for broadcasting, performs calculations analogous to complex multiplication, and finally combines the real and imaginary parts back into the original tensor.
+
+3. RMS operation - Fused kernel 
+<!-- https://ai.lefebvre-sarrut.eu/2023/07/20/deep-dive-into-kernel-fusion-accelerating-inference-in-llama-v2/#unleashing-enhanced-efficiency-simplified-fusions-in-rmsnorm-computation-with-triton -->
+
+4. Softmax operation 
+<!-- https://oneflow2020.medium.com/how-to-implement-an-efficient-softmax-cuda-kernel-oneflow-performance-optimization-sharing-405ad56e9031 -->
+- Warp and block tiling 
+A Warp processes one or two rows of computation for the case num_cols <= 1024.
+A block processes one row of computation and uses Shared Memory to store the intermediate result data, for cases where the required Shared Memory resources meet the bootable condition of Kernel Launch, which in this test environment is 1024 < num_cols <= 4096. A Block processes a row of computation without using Shared Memory, and reads input x repeatedly, for cases where (1) and (2) are not supported.
+
+- Pack Half types into Half2 for access, increasing instruction transfer without changing latency, similar to CUDA template for element-wise kernels optimization.
+
+- Bank Conflicts in Shared Memory.

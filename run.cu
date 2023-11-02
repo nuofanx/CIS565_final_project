@@ -148,12 +148,84 @@ void accum_gpu(float *a, float *b, int size){
 
 }
 
-void rmsnorm_gpu(float* o, float* x, float* weight, int size){
+// An important point to bear in mind is that when two consecutive load operations are carried out on the same addresses, the second operation is likely to get the data from the GPU cache, meaning it doesn't cost double DDR loading to perform two passes within the same Triton program.
+// For instance, the reduction operation (sum) is executed outside the loop due to its cost (this CUDA presentation: https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf will give you a basic understanding of how complicated reductions are at warp level).
+// single block 
+__global__ void rmsNormKernel(float* o, float* x, float* weight, int size){
+    //  first loop over input tensor to compute the root mean of the square
+    float ss = 0.0f;
+    for (int i = 0; i < elementsPerThread; i++) {
+        int index = threadIdx.x + i * 1024;
+        if (index < size)
+            ss += (float) x[index];
+    }
 
+    // calculate result and load to shared memory 
+    __shared__ float shared_ss;
+    // take mean, add eps, then sqrt 
+    if (threadIdx.x == 0) {
+        ss /= size;
+        ss += 1e-5f;
+        ss = 1.0f / sqrtf(ss);
+        shared_ss = ss;
+    }
+    __syncthreads();
+    // read from shared memory 
+    ss = shared_ss;
+    //  we keep this reduction operation outside the loop for perf reasons
+    using BlockReduce = cub::BlockReduce<float, 1024>;
+    __shared__ typename BlockReduce::TempStorage temp;
+    ss = BlockReduce(temp).Sum(ss * ss);
+
+    //  apply the normalization and multiply by RMS weights
+    for (int i = 0; i < elementsPerThread; i++) {
+        int index = threadIdx.x + i * 1024;
+        if (index < size) {
+            float val = (float)x[index];
+            val *= ss * (float)weight[index];
+            o[index] = (half)val;
+        }
+    }
+}
+
+void rmsnorm_gpu(float* o, float* x, float* weight, int size){
+    // calculate the blocks needed 
+    int elementsPerThread = CEIL_DIV(size, 1024);
+    // call the kernel with one single block and 1024 threads per block 
+    rmsNormKernel<<<1,1024>>>(o, x, weight, size, elementsPerThread);
 }
 
 void softmax_gpu(float* x, int size){
+    
+}
 
+// One head per block
+// https://ai.lefebvre-sarrut.eu/2023/07/20/deep-dive-into-kernel-fusion-accelerating-inference-in-llama-v2/#rewriting-without-complex-number-arithmetic
+// kernel fusion reduces global memory load/store operations
+// This savings can be very significant for memory-bound operations on the GPU. 
+// the overall performance improvement is usually proportional to the reduction in number of load/store operations.
+
+
+__global__ void RoPERotationKernel(float* sq, float* sk, float* f_real, float* f_imag, int num_heads, int head_size){
+    int h = blockIdx.x;
+    // splits the input tensors sq and sk into real and imaginary parts
+    // locate the correct pointer using head_size
+    float* q = sq + h * head_size;
+    float* k = sk + h * head_size;
+
+    int i = threadIdx.x * 2;
+    // find the correct index 
+    float q0 = q[i];
+    float q1 = q[i + 1];
+    float k0 = k[i];
+    float k1 = k[i + 1];
+    float fcr = f_real[i / 2];
+    float fci = f_imag[i / 2];
+    //  Perform the equivalent of complex number multiplication 
+    q[i] = q0 * fcr - q1 * fci;
+    q[i + 1] = q0 * fci + q1 * fcr;
+    k[i] = k0 * fcr - k1 * fci;
+    k[i + 1] = k0 * fci + k1 * fcr;
 }
 
 __global__ void matmulKernel_naive(float* output, float* input, float* weight, int n, int d, int numElements){
