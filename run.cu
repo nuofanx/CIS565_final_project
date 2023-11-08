@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <run.h> 
 #include <stdlib.h> 
-
+#include <cub/cub.cuh>
 #include <cuda_runtime.h>
 
 // define Transformer weight, RunState and config structs
@@ -145,9 +145,86 @@ void free_weights_gpu(TransformerWeights* w, int shared_weights) {
 // *** 
 //   TODO: neural net functions 
 void accum_gpu(float *a, float *b, int size){
+    // call kernel function with block number CEIL_DIV(size, 256) and thread size 256
+    elementwiseAdd <<< CEIL_DIV(size, 256), 256 >>> (a, b, size);
+}
+
+__global__ void elementwiseAdd(float* dest, half* src, int size) {
+     int thread_index = blockIdx.x * blockDim.x + threadIdx.x;
+     if (thread_index < size)
+        dest[i] = dest[i] + src[i];
+}
+
+//  Sigmoid Linear Unit (SiLU)  
+void siLU_gpu(float * hb, float* hb2, int size){
+    int threadNumber = 256;
+    int blockNumber = CEIL_DIV(size, );
+    siluKernel<<blockNumber, threadNumber>> (hb, hb2, size);
+}
+
+// kernel function for x * sigma(x)
+__global__ void siluKernel(float* dest, float* src, int size){
+    int thread_index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (thread_index < size){
+        // extract val
+        val = dest[i]
+        // sigma(x)
+        val *= 1.0f / (1.0f + expf(-val));
+        // x * sigma(x)
+        val *= src[i];
+    }
+}
+
+#define MAX_SEQ_LEN 8192
+__global__ void multiHeadAttentionKernel_naive(float* output, float* sq, float* key, float* value, int num_heads, int head_size, int loff, int seq_len, int dim){
+    int h = blockIdx.x;
+    // get Q vector based on the address of sq and head index for current thread
+    half * q = sq + h * head_size;
+    // get attention scores for this head
+    __shared__ float att[MAX_SEQ_LEN];
+    // iterate over all timesteps, including the current one
+    for (int t = threadIdx.x; t < seq_len; t+= blockDim.x) {
+        // get the key vector for this head and at this timestep
+        const float* k = key + loff + t * dim + h * head_size;
+        // calculate the attention score as the dot product of q and k
+
+        float score = 0.0f;
+        for (int i = 0; i < head_size; i++)
+            score += (float)q[i] * (float)k[i];
+        score /= sqrtf(head_size);
+        // save the score to the attention buffer
+        att[t] = score;
+    }
+    __syncthreads();
+    // softmax the scores to get attention weights
+    softmax_gpu(att, seq_len);
+    __syncthreads();
+
+    // calculate weighted sum of the values, store back into xb
+    for (int i = threadIdx.x; i < head_size; i += blockDim.x) {
+        float val = 0.0f;
+        for (int t = 0; t < seq_len; t++)
+            val += att[t] * value[loff + t * dim + h * head_size + i];
+        output[h * head_size + i] = val;
+    }
+}
+
+
+
+__global__ void multiHeadAttentionKernel_GEMM(){
+    
+}
+// parallelization strategies and expereiments 
+// https://hd10.dev/posts/my-interests-2/cs259.pdf
+__global__ void multiHeadAttentionKernel_horizontal(){
 
 }
 
+__global__ void multiHeadAttentionKernel_horizontal(){
+
+}
+
+__
 // An important point to bear in mind is that when two consecutive load operations are carried out on the same addresses, the second operation is likely to get the data from the GPU cache, meaning it doesn't cost double DDR loading to perform two passes within the same Triton program.
 // For instance, the reduction operation (sum) is executed outside the loop due to its cost (this CUDA presentation: https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf will give you a basic understanding of how complicated reductions are at warp level).
 // single block 
@@ -196,7 +273,7 @@ void rmsnorm_gpu(float* o, float* x, float* weight, int size){
 }
 
 void softmax_gpu(float* x, int size){
-    
+
 }
 
 // One head per block
@@ -537,9 +614,11 @@ __global__ void matmulKernel_Warptiling(){
 }
 
 //***
-//  TODO: timing functions
-long time_in_ms();
-
+long time_in_ms(){
+    struct timespec time;
+    timespec_get(&time, TIME_UTC);
+    return time.tv_sec * 1000 + time.tv_nsec / 1000000;
+ }
 //***
 
 int main(char* checkpoint){
@@ -602,6 +681,25 @@ int main(char* checkpoint){
 
     // ***
     //    TODO: read in the tokenizer.bin file 
+    
+    FILE* file = fopen("tokenizer.bin", "rb");
+    if (!file) {
+        // Run python tokenizer.py to convert tokenizer.model -> tokenizer.bin\n");
+        printf("Unable to open tokenizer.bin!")
+        return 1;
+    }
+    int len;
+    for (int i = 0; i < config.vocab_size; i++) {
+        // return if len cannot be read
+        if (fread(&len, sizeof(int), 1, file) != 1) { return 1; }
+        // allocate cpu memory for each char 
+        vocab[i] = (char*)malloc(len + 1);
+        // return if len does not match 
+        if (fread(vocab[i], len, 1, file) != 1) { return 1; }
+        vocab[i][len] = '\0'; // add the string terminating token
+    }
+    fclose(file);
+    
     // *** 
 
     // create and init RunState struct

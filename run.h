@@ -15,6 +15,7 @@ void free_weights_gpu(TransformerWeights* w, int shared_weights);
 int memcpy(void *w, int elements, FILE* f, void *block_cpu, void *block_gpu);
 int checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f, int shared_weights);
 // neural net functions
+void siLU_gpu(float* a, float* b, int size);
 void accum_gpu(float *a, float *b, int size);
 void rmsnorm_gpu(float* o, float* x, float* weight, int size);
 void softmax_gpu(float* x, int size);

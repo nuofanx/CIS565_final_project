@@ -5,13 +5,16 @@ https://github.com/RahulSChand/llama2.c-for-dummies
 https://siboehm.com/articles/22/CUDA-MMM
 
 # Run instructions
-1. Compile command: \
+1. Preprocess command: 
+   Check if tokenizer.bin file exists, if not, download tokenizer.model.
+   Run python tokenizer.py to convert tokenizer.model -> tokenizer.bin\n";
+2. Compile command: \
    on windows (): \
    gcc -O3 -o run run.cpp \ 
    on Mac: \
    clang++ -O3 -o run run.cpp  
                     
-2. Run command: \
+3. Run command: \
    Default cpu: \
    ./run.cpp \
    CUDA (windows only) \ 
@@ -41,6 +44,14 @@ https://siboehm.com/articles/22/CUDA-MMM
 1. Added possible optimizations for neural net operations in readme   
 2. Wrote code for kernels calculating rotationary embedding and RMSNorm.
   
+# Changes (until Nov.7)
+1. Added siLU kernel 
+2. Copied function for calculating time from llama2.cpp. 
+3. Added naive implementation of multihead attention kernel which calculates the normalized dot product of K transpose and Q, and then store the result of another dot product with V. Added function declarations in run.cu and experiments with other more efficient implementation of multihead attention will be explored if time permitting.
+4. Modified run instruction in readme. 
+5. Added code in main function to read tokenizer.bin file which can be generated through python script.
+6. Wrote naive implementation of elementwise add kernel function and accum_gpu function that calls that kernel function. Other more efficient implementations of elementwise add will be explored if time permitting.
+
 
 # TODO
 1. Write run.cu to support parallelization
