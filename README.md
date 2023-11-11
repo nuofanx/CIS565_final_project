@@ -52,17 +52,26 @@ https://siboehm.com/articles/22/CUDA-MMM
 5. Added code in main function to read tokenizer.bin file which can be generated through python script.
 6. Wrote naive implementation of elementwise add kernel function and accum_gpu function that calls that kernel function. Other more efficient implementations of elementwise add will be explored if time permitting.
 
+# Changes (until Nov.11)
+1. Added more efficient implementations of matmul operations, including global memory coalescing, shared memory cache-blocking, 1d/2d blocktiling. 
+2. Moved kernel functions of matmul operations to another folder matmul_kernels for cleaness, added kernels.cu file to include those kernel functions. 
+3. Added function in run.cu to get GPU info for calculations, including max threads per block, total global memory/shared memory, multiprocessor count, etc.
+4. Modified readme to include more efficient implementations of matmul. Updated progress tracker.
+5. Added softmax_gpu in run.cu.
+
 
 # TODO
 1. Write run.cu to support parallelization
     - [x] define three structs Config, runStates, and transformerWeights, which contain dimension parameters, state parameters and weight parameters respectively 
     - [x] write GPU momory allocation and deallocation functions for each parameter in those structs
-    - [ ] write initialization function that support random init or checkpoint read
-    - [ ] write gpu version of transformer operations \
+    - [x] write initialization function that support random init or checkpoint read
+    - [x] write basic gpu version of transformer operations \
        i) rmsnorm \
        ii) sum/accumulation\
        iii) softmax \
        iv) matmul 
+    - [ ] write more efficient implementations of matmul operations
+    - [ ] write more efficient implementations of multihead attention  
     - [ ] write transformer archetecture \
        i) attention (rmsnorm & matmul) \
        ii) RoPE positional embeddings (product and minus for each attention head) \
@@ -74,7 +83,7 @@ https://siboehm.com/articles/22/CUDA-MMM
     - [ ] write other utility functions \
        i) argmax \
        ii) sample
-    - [ ] write the main code to execute the program that supports the following: \
+    - [x] write the main code to execute the program that supports the following: \
        i) random init/checkpoint reading (define gpu memory, load model onto gpu) \
        ii) model inference (write a loop to forward the transformer to get logits for the next token on gpu) \
        iii) report our achieved tok/s\

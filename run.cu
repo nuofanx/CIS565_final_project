@@ -3,6 +3,7 @@
 #include <stdlib.h> 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
+#include "kernels.cu"
 
 // define Transformer weight, RunState and config structs
 
@@ -272,8 +273,43 @@ void rmsnorm_gpu(float* o, float* x, float* weight, int size){
     rmsNormKernel<<<1,1024>>>(o, x, weight, size, elementsPerThread);
 }
 
-void softmax_gpu(float* x, int size){
 
+void softmax_gpu(float* x, int size){
+    using BlockReduce = cub::BlockReduce<float, 1024>;
+    __shared__ typename BlockReduce::TempStorage temp;
+    __shared__ float shared_val;
+
+    int tid = threadIdx.x;
+    int step = blockDim.x;
+
+    // find max value (for numerical stability)
+    float max_val = tid < size ? x[tid] : 0;
+    for (int i = tid + step; i < size; i += step)
+        if (x[i] > max_val)
+            max_val = x[i];
+
+    max_val = BlockReduce(temp).Reduce(max_val, cub::Max());
+    if (threadIdx.x == 0)
+        shared_val = max_val;
+    __syncthreads();
+    max_val = shared_val;
+
+    // exp and sum
+    float sum = 0.0f;
+    for (int i = tid; i < size; i += step) {
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+
+    sum = BlockReduce(temp).Sum(sum);
+    if (threadIdx.x == 0)
+        shared_val = sum;
+    __syncthreads();
+    sum = shared_val;
+
+    // normalize
+    for (int i = tid; i < size; i += step)
+        x[i] /= sum;
 }
 
 // One head per block
@@ -305,44 +341,6 @@ __global__ void RoPERotationKernel(float* sq, float* sk, float* f_real, float* f
     k[i + 1] = k0 * fci + k1 * fcr;
 }
 
-__global__ void matmulKernel_naive(float* output, float* input, float* weight, int n, int d, int numElements){
-    // use the grid, block and thread hierarchy to assign each thread a unique entry in the result matrix C. 
-    // compute position in new matrix that this thread is responsible for
-    const uint x = blockIdx.x * blockDim.x + threadIdx.x;
-    const uint y = blockIdx.y * blockDim.y + threadIdx.y;
-    // threadIdx varies from 0 to 31, blockIdx varies from CEIL_DIV(n,32) to CEIL_DIV(d,32) 
-    // loop through each element that needs to be computed 
-    if (x< n && y < d){
-        float tmp = 0.0f;
-
-        for (int i = 0; i < numElements; i++) {
-            // indexing into strided in-memory representations of matrices.
-            tmp += input[x * numElements + i] * weight[i* d + y];
-
-        }
-        output[x*numElements + y] = tmp;
-    }
-}
-
-__global__ void matmulKernel_gmc(float* output, float* input, float* weight, int n, int d, int numElements){
-    // use the grid, block and thread hierarchy to assign each thread a unique entry in the result matrix C. 
-    // compute position in new matrix that this thread is responsible for
-    const int x = blockIdx.x * BLOCKSIZE + (threadIdx.x / BLOCKSIZE);
-    const int y = blockIdx.y * BLOCKSIZE + (threadIdx.x % BLOCKSIZE);
-    // threadIdx varies from 0 to 31, blockIdx varies from CEIL_DIV(n,32) to CEIL_DIV(d,32) 
-    // loop through each element that needs to be computed 
-    if (x< n && y < d){
-        float tmp = 0.0f;
-
-        for (int i = 0; i < numElements; i++) {
-            // indexing into strided in-memory representations of matrices.
-            tmp += input[x * numElements + i] * weight[i* d + y];
-
-        }
-        output[x*numElements + y] = tmp;
-    }
-}
-
 
 int CEIL_DIV(int a, int size){
     return (a -1) / size +1; 
@@ -372,76 +370,20 @@ void matmul_gpu_gmc(float* xout, float* x, float* w, int n, int d)
     matmulKernel_gmc<<<gridDim, blockDim>>>(xout, x, w, n, d);
 }
 
-//Shared Memory Cache-Blocking
-void matmul_gpu_smc(float* xout, float* x, float* w, int n, int d){
-    const int x = blockIdx.x * BLOCKSIZE + (threadIdx.x / BLOCKSIZE);
-    const int y = blockIdx.y * BLOCKSIZE + (threadIdx.x % BLOCKSIZE);
-    // advance pointers to the starting positions
-    A += cRow * BLOCKSIZE * K;                    // row=cRow, col=0
-    B += cCol * BLOCKSIZE;                        // row=0, col=cCol
-    C += cRow * BLOCKSIZE * N + cCol * BLOCKSIZE; // row=cRow, col=cCol
 
-    float tmp = 0.0;
-    // the outer loop advances A along the columns and B along
-    // the rows until we have fully calculated the result in C.
-    for (int bkIdx = 0; bkIdx < K; bkIdx += BLOCKSIZE) {
-    // Have each thread load one of the elements in A & B from
-    // global memory into shared memory.
-    // Make the threadCol (=threadIdx.x) the consecutive index
-    // to allow global memory access coalescing
-    As[threadRow * BLOCKSIZE + threadCol] = A[threadRow * K + threadCol];
-    Bs[threadRow * BLOCKSIZE + threadCol] = B[threadRow * N + threadCol];
 
-    // block threads in this block until cache is fully populated
-    __syncthreads();
-
-    // advance pointers onto next chunk
-    A += BLOCKSIZE;
-    B += BLOCKSIZE * N;
-
-    // execute the dotproduct on the currently cached block
-    for (int dotIdx = 0; dotIdx < BLOCKSIZE; ++dotIdx) {
-        tmp += As[threadRow * BLOCKSIZE + dotIdx] *
-                Bs[dotIdx * BLOCKSIZE + threadCol];
-    }
-    // need to sync again at the end, to avoid faster threads
-    // fetching the next block into the cache before slower threads are done
-    __syncthreads();
-    }
-    C[threadRow * N + threadCol] =
-        alpha * tmp + beta * C[threadRow * N + threadCol];
+void matmul_gpu_smcb(float* xout, float* x, float* w, int n, int d){
+    dim3 blockDim(32, 32);
+    dim3 gridDim(CEIL_DIV(n, 32), CEIL_DIV(d,32));
+    matmulKernel_SMCB<<<gridDim, blockDim>>>(xout, x, w, n, d, k);
 }
 
-
-
-// we explicitly cached the entry of B into Btmp and reordered the two inner loops for efficiency.
-
-// allocate thread-local cache for results in registerfile
-float threadResults[TM] = {0.0};
-
-// outer loop over block tiles
-for (uint bkIdx = 0; bkIdx < K; bkIdx += BK) {
-  // populate the SMEM caches (same as before)
-  As[innerRowA * BK + innerColA] = A[innerRowA * K + innerColA];
-  Bs[innerRowB * BN + innerColB] = B[innerRowB * N + innerColB];
-  __syncthreads();
-
-  // advance blocktile for outer loop
-  A += BK;
-  B += BK * N;
-
-  // calculate per-thread results
-  for (uint dotIdx = 0; dotIdx < BK; ++dotIdx) {
-    // we make the dotproduct loop the outside loop, which facilitates
-    // reuse of the Bs entry, which we can cache in a tmp var.
-    float Btmp = Bs[dotIdx * BN + threadCol];
-    for (uint resIdx = 0; resIdx < TM; ++resIdx) {
-      threadResults[resIdx] +=
-          As[(threadRow * TM + resIdx) * BK + dotIdx] * Btmp;
-    }
-  }
-  __syncthreads();
+void matmul_gpu_1d_blocktiling(float* xout, float* x, float* w, int n, int d){
+    dim3 blockDim(32, 32);
+    dim3 gridDim(CEIL_DIV(n, 32), CEIL_DIV(d,32));
+    matmulKernel_1d_blocktiling<<<gridDim, blockDim>>>(xout, x, w, n, d, k);
 }
+
 
 
 // Access coalescing is done at kernel runtime by the hardware. This makes sense since coalescing requires aligned access, which cannot be guaranteed at compile time as we pass the matrix pointers as function arguments. 
@@ -486,132 +428,6 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int sha
      return 0;
 }
 
-// Increasing Arithmetic Intensity via 2D Blocktiling
-__global__ void matmulKernel_2dBlocktiling(){
-    // compute a grid of 8*8 elements of C per thread. 
-    // The first stage of the kernel is for all threads to work together to populate the SMEM cache. 
-    for (uint loadOffset = 0; loadOffset < BM; loadOffset += strideA) {
-    As[(innerRowA + loadOffset) * BK + innerColA] =
-        A[(innerRowA + loadOffset) * K + innerColA];
-    }
-    for (uint loadOffset = 0; loadOffset < BK; loadOffset += strideB) {
-    Bs[(innerRowB + loadOffset) * BN + innerColB] =
-        B[(innerRowB + loadOffset) * N + innerColB];
-    }
-
-    __syncthreads();
-
-
-    // 
-    // allocate thread-local cache for results in registerfile
-    float threadResults[TM * TN] = {0.0};
-    // register caches for As and Bs
-    float regM[TM] = {0.0};
-    float regN[TN] = {0.0};
-
-    // outer-most loop over block tiles
-    for (uint bkIdx = 0; bkIdx < K; bkIdx += BK) {
-    // populate the SMEM caches
-    for (uint loadOffset = 0; loadOffset < BM; loadOffset += strideA) {
-        As[(innerRowA + loadOffset) * BK + innerColA] =
-            A[(innerRowA + loadOffset) * K + innerColA];
-    }
-    for (uint loadOffset = 0; loadOffset < BK; loadOffset += strideB) {
-        Bs[(innerRowB + loadOffset) * BN + innerColB] =
-            B[(innerRowB + loadOffset) * N + innerColB];
-    }
-    __syncthreads();
-
-    // advance blocktile
-    A += BK;     // move BK columns to right
-    B += BK * N; // move BK rows down
-
-    // calculate per-thread results
-    for (uint dotIdx = 0; dotIdx < BK; ++dotIdx) {
-        // load relevant As & Bs entries into registers
-        for (uint i = 0; i < TM; ++i) {
-        regM[i] = As[(threadRow * TM + i) * BK + dotIdx];
-        }
-        for (uint i = 0; i < TN; ++i) {
-        regN[i] = Bs[dotIdx * BN + threadCol * TN + i];
-        }
-        // perform outer product on register cache, accumulate
-        // into threadResults
-        for (uint resIdxM = 0; resIdxM < TM; ++resIdxM) {
-        for (uint resIdxN = 0; resIdxN < TN; ++resIdxN) {
-            threadResults[resIdxM * TN + resIdxN] +=
-                regM[resIdxM] * regN[resIdxN];
-        }
-        }
-    }
-    __syncthreads();
-    }
-}
-
-// Vectorize SMEM and GMEM Accesses
-__global__ void matmulKernel_vecSMEM_GMEM(){
-    float4 tmp =
-        reinterpret_cast<float4 *>(&A[innerRowA * K + innerColA * 4])[0];
-    // transpose A during the GMEM to SMEM transfer
-    As[(innerColA * 4 + 0) * BM + innerRowA] = tmp.x;
-    As[(innerColA * 4 + 1) * BM + innerRowA] = tmp.y;
-    As[(innerColA * 4 + 2) * BM + innerRowA] = tmp.z;
-    As[(innerColA * 4 + 3) * BM + innerRowA] = tmp.w;
-
-    //why faster than just manually unrolling the access (or using pragma unroll)
-    reinterpret_cast<float4 *>(&Bs[innerRowB * BN + innerColB * 4])[0] =
-        reinterpret_cast<float4 *>(&B[innerRowB * N + innerColB * 4])[0];
-    __syncthreads();
-
-    // the compiler has no way to verify that the float* B pointer that is passed to the kernel is 128b aligned, which would be a requirement for using LDG.E.128. So the reinterpret_cast’s only purpose is to promise the compiler that the float* B pointer will be aligned.
-    // Bs[innerRowB * BN + innerColB * 4 + 0] = B[innerRowB * N + innerColB * 4 + 0];
-    // Bs[innerRowB * BN + innerColB * 4 + 1] = B[innerRowB * N + innerColB * 4 + 1];
-    // Bs[innerRowB * BN + innerColB * 4 + 2] = B[innerRowB * N + innerColB * 4 + 2];
-    // Bs[innerRowB * BN + innerColB * 4 + 3] = B[innerRowB * N + innerColB * 4 + 3];
-}
-
-
-// Warptiling
-// Blocktiling: Different blocks can execute in parallel on different SMs.
-// Warptiling: Different warps can execute in parallel on different warp schedulers, and concurrently on the same warp scheduler.
-// Threadtiling: (a very limited amount of) instructions can execute in parallel on the same CUDA cores (= instruction-level parallelism aka ILP).
-// dotIdx loops over contents of SMEM
-
-__global__ void matmulKernel_Warptiling(){
-    for (uint dotIdx = 0; dotIdx < BK; ++dotIdx) {
-        // populate registers for this thread's part of the warptile
-        for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx) {
-            for (uint i = 0; i < TM; ++i) {
-            regM[wSubRowIdx * TM + i] =
-                As[(dotIdx * BM) + warpRow * WM + wSubRowIdx * WSUBM +
-                    threadRowInWarp * TM + i];
-            }
-        }
-        for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx) {
-            for (uint i = 0; i < TN; ++i) {
-            regN[wSubColIdx * TN + i] =
-                Bs[(dotIdx * BN) + warpCol * WN + wSubColIdx * WSUBN +
-                    threadColInWarp * TN + i];
-            }
-        }
-    }
-
-    // execute warptile matmul. Later this will map well to
-    // warp-wide matrix instructions, executed on tensor cores.
-    for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx) {
-        for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx) {
-            // calculate per-thread results with register-cache locality
-            for (uint resIdxM = 0; resIdxM < TM; ++resIdxM) {
-                for (uint resIdxN = 0; resIdxN < TN; ++resIdxN) {
-                threadResults[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) +
-                                (wSubColIdx * TN) + resIdxN] +=
-                    regM[wSubRowIdx * TM + resIdxM] *
-                    regN[wSubColIdx * TN + resIdxN];
-                }
-            }
-        }
-    }
-}
 
 //***
 long time_in_ms(){
