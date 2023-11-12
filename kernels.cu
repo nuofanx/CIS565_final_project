@@ -1,14 +1,17 @@
 #pragma once
 
-#include "kernels/10_kernel_warptiling.cuh"
-#include "kernels/11_kernel_double_buffering.cuh"
-#include "kernels/12_kernel_double_buffering.cuh"
-#include "kernels/1_naive.cuh"
-#include "kernels/2_kernel_global_mem_coalesce.cuh"
-#include "kernels/3_kernel_shared_mem_blocking.cuh"
-#include "kernels/4_kernel_1D_blocktiling.cuh"
-#include "kernels/5_kernel_2D_blocktiling.cuh"
-#include "kernels/6_kernel_vectorize.cuh"
-#include "kernels/7_kernel_resolve_bank_conflicts.cuh"
-#include "kernels/8_kernel_bank_extra_col.cuh"
-#include "kernels/9_kernel_autotuned.cuh"
+#include "matmul_kernels/1_naive.cu"
+#include "matmul_kernels/2_global_mem_coalesce.cu"
+#include "matmul_kernels/3_shared_mem_blocking.cu"
+#include "matmul_kernels/4_1d_blocktiling.cu"
+#include "matmul_kernels/5_2d_blocktiling.cu"
+#include "matmul_kernels/6_vectorized.cu"
+#include "matmul_kernels/7_warptiling.cu"
+
+#include "transformer_kernels/RoPERotationKernel.cu"
+#include "transformer_kernels/multiHeadAttentionKernel_naive.cu"
+#include "transformer_kernels/siluElementwiseMulKernel.cu"
+
+#include "add_kernels/elementwiseAddKernel.cu"
+
+#include "weight_quantization_kernels/half_to_full.cu" 

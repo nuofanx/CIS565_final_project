@@ -6,8 +6,8 @@ https://siboehm.com/articles/22/CUDA-MMM
 
 # Run instructions
 1. Preprocess command: 
-   Check if tokenizer.bin file exists, if not, download tokenizer.model.
-   Run python tokenizer.py to convert tokenizer.model -> tokenizer.bin\n";
+   Check if tokenizer.bin file exists, if not, download tokenizer.model by running 
+   wget https://karpathy.ai/llama2c/model.bin -P out
 2. Compile command: \
    on windows (): \
    gcc -O3 -o run run.cpp \ 
@@ -52,13 +52,20 @@ https://siboehm.com/articles/22/CUDA-MMM
 5. Added code in main function to read tokenizer.bin file which can be generated through python script.
 6. Wrote naive implementation of elementwise add kernel function and accum_gpu function that calls that kernel function. Other more efficient implementations of elementwise add will be explored if time permitting.
 
-# Changes (until Nov.11)
-1. Added more efficient implementations of matmul operations, including global memory coalescing, shared memory cache-blocking, 1d/2d blocktiling. 
+# Changes (until Nov.10)
+1. Added more efficient implementations of matmul operations, including global memory coalescing, shared memory cache-blocking, 1d/2d blocktiling, etc. 
 2. Moved kernel functions of matmul operations to another folder matmul_kernels for cleaness, added kernels.cu file to include those kernel functions. 
 3. Added function in run.cu to get GPU info for calculations, including max threads per block, total global memory/shared memory, multiprocessor count, etc.
 4. Modified readme to include more efficient implementations of matmul. Updated progress tracker.
 5. Added softmax_gpu in run.cu.
 
+# Changes (until Nov.11)
+1. Changed run.h to run.cuh, modified paths to files in kernels.cu
+2. Added run_kernel function in run.cu to select the desired matmul kernel function to run based on kernel number.
+3. Added optional weight quantization support - added weight quantization kernel for converting float back to half after gpu calculation is done in run.cu, still working on minor adjustments in gpu kernels for converting float to half on gpu.
+4. Added transformer function in main function in run.cu that calls all the kernel functions and generates output based on weights and input. 
+5. Added python util folder and plot_benchmark_results.py to generate experiment results.
+6. Updated run instruction to include a pretrainded transformer model to download for inference. 
 
 # TODO
 1. Write run.cu to support parallelization

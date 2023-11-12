@@ -145,72 +145,18 @@ void free_weights_gpu(TransformerWeights* w, int shared_weights) {
 
 // *** 
 //   TODO: neural net functions 
-void accum_gpu(float *a, float *b, int size){
+void run_accum_gpu(float *a, float *b, int size){
     // call kernel function with block number CEIL_DIV(size, 256) and thread size 256
-    elementwiseAdd <<< CEIL_DIV(size, 256), 256 >>> (a, b, size);
+    elementwiseAddKernel <<< CEIL_DIV(size, 256), 256 >>> (a, b, size);
 }
 
-__global__ void elementwiseAdd(float* dest, half* src, int size) {
-     int thread_index = blockIdx.x * blockDim.x + threadIdx.x;
-     if (thread_index < size)
-        dest[i] = dest[i] + src[i];
-}
 
 //  Sigmoid Linear Unit (SiLU)  
-void siLU_gpu(float * hb, float* hb2, int size){
+void run_siluElementwiseMul_gpu(float * hb, float* hb2, int size){
     int threadNumber = 256;
     int blockNumber = CEIL_DIV(size, );
-    siluKernel<<blockNumber, threadNumber>> (hb, hb2, size);
+    siluElementwiseMulKernel<<blockNumber, threadNumber>> (hb, hb2, size);
 }
-
-// kernel function for x * sigma(x)
-__global__ void siluKernel(float* dest, float* src, int size){
-    int thread_index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (thread_index < size){
-        // extract val
-        val = dest[i]
-        // sigma(x)
-        val *= 1.0f / (1.0f + expf(-val));
-        // x * sigma(x)
-        val *= src[i];
-    }
-}
-
-#define MAX_SEQ_LEN 8192
-__global__ void multiHeadAttentionKernel_naive(float* output, float* sq, float* key, float* value, int num_heads, int head_size, int loff, int seq_len, int dim){
-    int h = blockIdx.x;
-    // get Q vector based on the address of sq and head index for current thread
-    half * q = sq + h * head_size;
-    // get attention scores for this head
-    __shared__ float att[MAX_SEQ_LEN];
-    // iterate over all timesteps, including the current one
-    for (int t = threadIdx.x; t < seq_len; t+= blockDim.x) {
-        // get the key vector for this head and at this timestep
-        const float* k = key + loff + t * dim + h * head_size;
-        // calculate the attention score as the dot product of q and k
-
-        float score = 0.0f;
-        for (int i = 0; i < head_size; i++)
-            score += (float)q[i] * (float)k[i];
-        score /= sqrtf(head_size);
-        // save the score to the attention buffer
-        att[t] = score;
-    }
-    __syncthreads();
-    // softmax the scores to get attention weights
-    softmax_gpu(att, seq_len);
-    __syncthreads();
-
-    // calculate weighted sum of the values, store back into xb
-    for (int i = threadIdx.x; i < head_size; i += blockDim.x) {
-        float val = 0.0f;
-        for (int t = 0; t < seq_len; t++)
-            val += att[t] * value[loff + t * dim + h * head_size + i];
-        output[h * head_size + i] = val;
-    }
-}
-
-
 
 __global__ void multiHeadAttentionKernel_GEMM(){
     
@@ -225,56 +171,18 @@ __global__ void multiHeadAttentionKernel_horizontal(){
 
 }
 
-__
-// An important point to bear in mind is that when two consecutive load operations are carried out on the same addresses, the second operation is likely to get the data from the GPU cache, meaning it doesn't cost double DDR loading to perform two passes within the same Triton program.
-// For instance, the reduction operation (sum) is executed outside the loop due to its cost (this CUDA presentation: https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf will give you a basic understanding of how complicated reductions are at warp level).
-// single block 
-__global__ void rmsNormKernel(float* o, float* x, float* weight, int size){
-    //  first loop over input tensor to compute the root mean of the square
-    float ss = 0.0f;
-    for (int i = 0; i < elementsPerThread; i++) {
-        int index = threadIdx.x + i * 1024;
-        if (index < size)
-            ss += (float) x[index];
-    }
-
-    // calculate result and load to shared memory 
-    __shared__ float shared_ss;
-    // take mean, add eps, then sqrt 
-    if (threadIdx.x == 0) {
-        ss /= size;
-        ss += 1e-5f;
-        ss = 1.0f / sqrtf(ss);
-        shared_ss = ss;
-    }
-    __syncthreads();
-    // read from shared memory 
-    ss = shared_ss;
-    //  we keep this reduction operation outside the loop for perf reasons
-    using BlockReduce = cub::BlockReduce<float, 1024>;
-    __shared__ typename BlockReduce::TempStorage temp;
-    ss = BlockReduce(temp).Sum(ss * ss);
-
-    //  apply the normalization and multiply by RMS weights
-    for (int i = 0; i < elementsPerThread; i++) {
-        int index = threadIdx.x + i * 1024;
-        if (index < size) {
-            float val = (float)x[index];
-            val *= ss * (float)weight[index];
-            o[index] = (half)val;
-        }
-    }
-}
-
-void rmsnorm_gpu(float* o, float* x, float* weight, int size){
+void run_rmsnorm_gpu(float* o, float* x, float* weight, int size){
     // calculate the blocks needed 
     int elementsPerThread = CEIL_DIV(size, 1024);
     // call the kernel with one single block and 1024 threads per block 
     rmsNormKernel<<<1,1024>>>(o, x, weight, size, elementsPerThread);
 }
 
+void run_RoPERotation_gpu(float *q, float *k, float *f_real, float *f_imag, int num_heads, int head_size) {
+    RoPERotation_kernel <<<num_heads, head_size / 2 >>> (q, k, f_real, f_imag, num_heads, head_size);
+}
 
-void softmax_gpu(float* x, int size){
+void run_softmax_gpu(float* x, int size){
     using BlockReduce = cub::BlockReduce<float, 1024>;
     __shared__ typename BlockReduce::TempStorage temp;
     __shared__ float shared_val;
@@ -312,41 +220,12 @@ void softmax_gpu(float* x, int size){
         x[i] /= sum;
 }
 
-// One head per block
-// https://ai.lefebvre-sarrut.eu/2023/07/20/deep-dive-into-kernel-fusion-accelerating-inference-in-llama-v2/#rewriting-without-complex-number-arithmetic
-// kernel fusion reduces global memory load/store operations
-// This savings can be very significant for memory-bound operations on the GPU. 
-// the overall performance improvement is usually proportional to the reduction in number of load/store operations.
-
-
-__global__ void RoPERotationKernel(float* sq, float* sk, float* f_real, float* f_imag, int num_heads, int head_size){
-    int h = blockIdx.x;
-    // splits the input tensors sq and sk into real and imaginary parts
-    // locate the correct pointer using head_size
-    float* q = sq + h * head_size;
-    float* k = sk + h * head_size;
-
-    int i = threadIdx.x * 2;
-    // find the correct index 
-    float q0 = q[i];
-    float q1 = q[i + 1];
-    float k0 = k[i];
-    float k1 = k[i + 1];
-    float fcr = f_real[i / 2];
-    float fci = f_imag[i / 2];
-    //  Perform the equivalent of complex number multiplication 
-    q[i] = q0 * fcr - q1 * fci;
-    q[i + 1] = q0 * fci + q1 * fcr;
-    k[i] = k0 * fcr - k1 * fci;
-    k[i + 1] = k0 * fci + k1 * fcr;
-}
-
 
 int CEIL_DIV(int a, int size){
     return (a -1) / size +1; 
 }
 
-void matmul_gpu_naive(float* xout, float* x, float* w, int n, int d){
+void run_matmul_gpu_naive(float* xout, float* x, float* w, int n, int d){
     // calculates dot product of x and w, store in xout
     // n is the input dimension, d is the dimension
     // define 3D dimension parameters
@@ -358,7 +237,7 @@ void matmul_gpu_naive(float* xout, float* x, float* w, int n, int d){
     
 }
 
-void matmul_gpu_gmc(float* xout, float* x, float* w, int n, int d)
+void run_matmul_gpu_global_mem_coalesce(float* xout, float* x, float* w, int n, int d)
 {
     // calculates dot product of x and w, store in xout
     // n is the input dimension, d is the dimension
@@ -367,18 +246,16 @@ void matmul_gpu_gmc(float* xout, float* x, float* w, int n, int d)
     dim3 blockDim(32, 32);
     dim3 gridDim(CEIL_DIV(n, 32), CEIL_DIV(d,32));
     // kernel for matmul operation
-    matmulKernel_gmc<<<gridDim, blockDim>>>(xout, x, w, n, d);
+    matmulKernel_global_mem_coalesce<<<gridDim, blockDim>>>(xout, x, w, n, d);
 }
 
-
-
-void matmul_gpu_smcb(float* xout, float* x, float* w, int n, int d){
+void run_matmul_gpu_shared_mem_blocking(float* xout, float* x, float* w, int n, int d){
     dim3 blockDim(32, 32);
     dim3 gridDim(CEIL_DIV(n, 32), CEIL_DIV(d,32));
-    matmulKernel_SMCB<<<gridDim, blockDim>>>(xout, x, w, n, d, k);
+    matmulKernel_shared_mem_blocking<<<gridDim, blockDim>>>(xout, x, w, n, d, k);
 }
 
-void matmul_gpu_1d_blocktiling(float* xout, float* x, float* w, int n, int d){
+void run_matmul_gpu_1d_blocktiling(float* xout, float* x, float* w, int n, int d){
     dim3 blockDim(32, 32);
     dim3 gridDim(CEIL_DIV(n, 32), CEIL_DIV(d,32));
     matmulKernel_1d_blocktiling<<<gridDim, blockDim>>>(xout, x, w, n, d, k);
@@ -397,7 +274,7 @@ int Memcpy(void *w, int elements, FILE* f, void *block_cpu, void *block_gpu){
     return 0;
 }
 
-void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int shared_weights){
+void checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f, int shared_weights){
     // define the generic size that could contain all params 
     size_t largest_possible_size =std::max((size_t)p->vocab_size, p->n_layers * std::max(p->dim, p->hidden_dim))* p->dim * sizeof(float);
     // copy to gpu
@@ -428,6 +305,13 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, float* f, int sha
      return 0;
 }
 
+void cudaCheck(cudaError_t error, const char *file, int line) {
+  if (error != cudaSuccess) {
+    printf("[CUDA ERROR] at file %s:%d:\n%s\n", file, line,
+           cudaGetErrorString(error));
+    exit(EXIT_FAILURE);
+  }
+};
 
 //***
 long time_in_ms(){
@@ -436,6 +320,138 @@ long time_in_ms(){
     return time.tv_sec * 1000 + time.tv_nsec / 1000000;
  }
 //***
+
+// takes in token, pos, and model weights 
+void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w, int kernel_num, int weight_quant){
+    float* x = s->x;
+    int dim = p->dim;
+    int hidden_dim = p->hidden_dim;
+    int head_size = dim / p->n_heads;
+     // copy the token embedding into x
+    float* content_row = &(w->token_embedding_table[token * dim]);
+    cudaMemcpyAsync(x, content_row, dim * sizeof(float), cudaMemcpyDeviceToDevice);
+
+    float* freq_cis_real_row = w->freq_cis_real + pos * head_size / 2;
+    float* freq_cis_imag_row = w->freq_cis_imag + pos * head_size / 2;
+
+    // forward all the layers
+    for (int l = 0; l < p->n_layers; l++) {
+
+        // attention rmsnorm
+        run_rmsnorm_gpu(s->xb, x, w->rms_att_weight + l * dim, dim);
+
+        // qkv matmuls for this position
+        run_matmul_gpu(s->q, s->xb, w->wq + l * dim * dim, dim, dim);
+        run_matmul_gpu(s->k, s->xb, w->wk + l * dim * dim, dim, dim);
+        run_matmul_gpu(s->v, s->xb, w->wv + l * dim * dim, dim, dim);
+
+        // apply RoPE rotation to the q and k vectors for each head
+        run_RoPERotation_gpu(s->q, s->k, freq_cis_real_row, freq_cis_imag_row, p->n_heads, head_size);
+
+         // save key,value at this time step (pos) to our kv cache
+        int loff = l * p->seq_len * dim; // kv cache layer offset for convenience
+        float * key_cache_row = s->key_cache + loff + pos * dim;
+        float* value_cache_row = s->value_cache + loff + pos * dim;
+        cudaMemcpyAsync(key_cache_row, s->k, dim * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaMemcpyAsync(value_cache_row, s->v, dim * sizeof(float), cudaMemcpyDeviceToDevice);
+
+        MultiHeadAttention(s->xb, s->q, s->key_cache, s->value_cache, p->n_heads, head_size, loff, pos+1);
+
+        // final matmul to get the output of the attention
+        run_matmul_gpu(s->xb2, s->xb, w->wo + l * dim * dim, dim, dim, kernel_num, weight_quant_num);
+
+        // residual connection back into x
+        run_accum_gpu(x, s->xb2, dim);
+
+        // ffn rmsnorm
+        run_rmsnorm_gpu(s->xb, x, w->rms_ffn_weight + l * dim, dim);
+
+        // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
+        // first calculate self.w1(x) and self.w3(x) 
+        // (dim, hidden_dim) x (hidden_dim, ) 
+        run_matmul_gpu(s->hb, s->xb, w->w1 + l * dim * hidden_dim, dim, hidden_dim, kernel_num, weight_quant_num);
+        run_matmul_gpu(s->hb2, s->xb, w->w3 + l * dim * hidden_dim, dim, hidden_dim, kernel_num, weight_quant_num);
+
+        // apply F.silu activation on hb and multiply it with hb2
+        run_siluElementwiseMul_gpu(s->hb, s->hb2, hidden_dim);
+
+        // final matmul to get the output of the ffn
+        run_matmul_gpu(s->xb, s->hb, w->w2 + l * dim * hidden_dim, hidden_dim, dim, kernel_num, weight_quant_num);
+
+         // residual connection
+        run_accum_gpu(x, s->xb, dim);
+     }
+
+    // final rmsnorm
+    run_rmsnorm_gpu(x, x, w->rms_final_weight, dim);
+
+    // classifier into logits
+    run_matmul_gpu(s->logits_gpu, x, w->wcls, p->dim, p->vocab_size);
+
+    switch (weight_quant){
+    // does not do anything, float -> float    
+    case 0: 
+        break;
+    // convert half to float 
+    case 1:
+        ConvertFP16toFP32 <<<CEIL_DIV(p->vocab_size, 256), 256 >>> (s->logits_temp, s->logits_gpu, p->vocab_size);
+    default: 
+        throw std::invalid_argument("Unknown weight quantization number");
+    }
+    
+    // copy logits from GPU->CPU
+    cudaMemcpy(s->logits, s->logits_temp, p->vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
+}
+
+// function that selects the calculation precision in gpu 
+void run_matmul_gpu(float* output, float* input, float* weight, int input_dim, int output_dim, int hidden_dim, int kernel_num, int weight_quant_num){
+    switch (weight_quant_num){
+    case 0:
+        run_sgemm_matmul_kernel_FP32(output, input, weight, input_dim, output_dim, hidden_dim, kernel_num);
+    case 1:
+        run_sgemm_matmul_kernel_FP16(output, input, weight, input_dim, output_dim, hidden_dim, kernel_num);
+    default:
+        throw std::invalid_argument("Unknown weight quantization number");
+    }
+}
+   
+void run_sgemm_matmul_kernel_FP32(float* C, float* A, float* B, int M, int N, int K, int kernel_num) {
+    switch (kernel_num) {
+        
+    case 0:
+        cudaError_t cudaStat;  // cudaMalloc status
+        cublasStatus_t stat;   // cuBLAS functions status
+        cublasHandle_t handle; // cuBLAS context
+        stat = cublasCreate(&handle); // initialize CUBLAS context
+        float alpha = 1.0f;
+        float beta = 0.0f;
+        runCublasFP32(handle, M, N, K, alpha, A, B, beta, C);
+        break;
+    case 1:
+        run_matmul_naive(C, A, B, M, N, K);
+        break;
+    case 2:
+        run_matmul_gpu_global_mem_coalesce(C, A, B, M, N, K);
+        break;
+    case 3:
+        run_matmul_shared_mem_block(C, A, B, M, N, K);
+        break;
+    case 4:
+        run_matmul_1d_blocktiling(C, A, B, M, N, K);
+        break;
+    case 5:
+        run_matmul_2d_blocktiling(C, A, B, M, N, K);
+        break;
+    case 6:
+        run_matmul_vectorized(C, A, B, M, N, K);
+        break;
+    case 7:
+        run_matmul_warptiling(C, A, B, M, N, K);
+        break;
+    default:
+        throw std::invalid_argument("Unknown kernel number");
+    }
+}
 
 int main(char* checkpoint){
     // define model parameters
@@ -538,9 +554,11 @@ int main(char* checkpoint){
             next = argmax_gpu(state.logits, config.vocab_size);
         } else {
             // apply the temperature to the logits
-            for (int q=0; q<config.vocab_size; q++) { state.logits[q] /= temperature; }
+            for (int q=0; q<config.vocab_size; q++) {
+                state.logits[q] /= temperature; 
+            }
             // apply softmax to the logits to get the probabilities for next token
-            softmax_gpu(state.logits, config.vocab_size);
+            run_softmax_gpu(state.logits, config.vocab_size);
             // we now want to sample from this distribution to get the next token
             next = sample(state.logits, config.vocab_size);
         }
