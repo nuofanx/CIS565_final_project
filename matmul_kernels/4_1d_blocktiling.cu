@@ -7,7 +7,9 @@
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 
-__global__ void matmulKernel_1d_blocktiling(float* C, float* A, float* B, int M, int N, int K){
+template <const int BM, const int BN, const int BK, const int TM>
+
+__global__ void matmulKernel_1d_blocktiling(void* C, void* A, void* B, int M, int N, int K, int weight_quant_num){
     // If we flip x and y here we get ~30% less performance for large matrices.
     // The current, 30% faster configuration ensures that blocks with sequential
     // blockIDs access columns of B sequentially, while sharing the same row of A.
@@ -60,17 +62,30 @@ __global__ void matmulKernel_1d_blocktiling(float* C, float* A, float* B, int M,
         for (uint dotIdx = 0; dotIdx < BK; ++dotIdx) {
             // we make the dotproduct loop the outside loop, which facilitates
             // reuse of the Bs entry, which we can cache in a tmp var.
-            float Btmp = Bs[dotIdx * BN + threadCol];
+            float Btmp = (float)Bs[dotIdx * BN + threadCol];
             for (uint resIdx = 0; resIdx < TM; ++resIdx) {
-            threadResults[resIdx] +=
-                As[(threadRow * TM + resIdx) * BK + dotIdx] * Btmp;
+                threadResults[resIdx] +=
+                    (float)As[(threadRow * TM + resIdx) * BK + dotIdx] * Btmp;  
             }
         }
         __syncthreads();
     }
     // write out the results
-    for (uint resIdx = 0; resIdx < TM; ++resIdx) {
-        C[(threadRow * TM + resIdx) * N + threadCol] =
-            threadResults[resIdx];
+    
+    switch (weight_quant_num){
+        case 0:
+            for (uint resIdx = 0; resIdx < TM; ++resIdx) {
+                C[(threadRow * TM + resIdx) * N + threadCol] =
+                    threadResults[resIdx];
+            }
+            break;
+        case 1:
+            for (uint resIdx = 0; resIdx < TM; ++resIdx) {
+                C[(threadRow * TM + resIdx) * N + threadCol] =
+                    (half)threadResults[resIdx];
+            }
+            break;
+        default:
+            throw std::invalid_argument("Unknown weight quantization number");
     }
 }

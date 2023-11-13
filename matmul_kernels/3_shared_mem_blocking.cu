@@ -10,7 +10,7 @@
 //Shared Memory Cache-Blocking
 template <const int BLOCKSIZE>
 
-__global__ void matmulKernel_shared_mem_blocking(float* C, float* A, float* B, int M, int N, int K){
+__global__ void matmulKernel_shared_mem_blocking(void* C, void* A, void* B, int M, int N, int K, int weight_quant_num){
      // the output block that we want to compute in this threadblock
     const uint cRow = blockIdx.x;
     const uint cCol = blockIdx.y;
@@ -49,12 +49,22 @@ __global__ void matmulKernel_shared_mem_blocking(float* C, float* A, float* B, i
 
         // execute the dotproduct on the currently cached block
         for (int dotIdx = 0; dotIdx < BLOCKSIZE; ++dotIdx) {
-            tmp += As[threadRow * BLOCKSIZE + dotIdx] *
-                    Bs[dotIdx * BLOCKSIZE + threadCol];
+            tmp += (float)As[threadRow * BLOCKSIZE + dotIdx] *
+                    (float)Bs[dotIdx * BLOCKSIZE + threadCol];
         }
         // need to sync again at the end, to avoid faster threads
         // fetching the next block into the cache before slower threads are done
         __syncthreads();
     }
-    C[threadRow * N + threadCol] = tmp;
+    switch (weight_quant_num){
+        case 0:
+            C[threadRow * N + threadCol] = tmp;
+            break;
+        case 1:
+            C[threadRow * N + threadCol] = (half) tmp;
+            break;
+        default:
+            throw std::invalid_argument("Unknown weight quantization number");
+
+    }
 }

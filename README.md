@@ -67,6 +67,15 @@ https://siboehm.com/articles/22/CUDA-MMM
 5. Added python util folder and plot_benchmark_results.py to generate experiment results.
 6. Updated run instruction to include a pretrainded transformer model to download for inference. 
 
+# Changes (until Nov.12)
+1. Added support for half precision calculation in matmul kernels - completed code for 1d blocktiling, 2d blocktiling, and vectorized kernel.  
+2. Added another matmul kernel using cub:reduce lib for comparison.
+3. Updated TODO tracker to show that two parts have been completed - more efficient implementations of matmul kernels and write transformer architecture. Some efficient implementations of matmul only works for square matrices at this moment, and will be adapted to specific matrix shape in the transformer if time permitting. 
+
+# Changes (until Nov.13)
+1. Added support for half precision calculation in add kernel.
+2. Added utility functions argmax and sample in . Updated TODO tracker correspondingly.
+
 # TODO
 1. Write run.cu to support parallelization
     - [x] define three structs Config, runStates, and transformerWeights, which contain dimension parameters, state parameters and weight parameters respectively 
@@ -77,9 +86,9 @@ https://siboehm.com/articles/22/CUDA-MMM
        ii) sum/accumulation\
        iii) softmax \
        iv) matmul 
-    - [ ] write more efficient implementations of matmul operations
+    - [x] write more efficient implementations of matmul operations
     - [ ] write more efficient implementations of multihead attention  
-    - [ ] write transformer archetecture \
+    - [x] write transformer archetecture \
        i) attention (rmsnorm & matmul) \
        ii) RoPE positional embeddings (product and minus for each attention head) \
        iii) multiquery attention (dot product & softmax) \
@@ -87,7 +96,7 @@ https://siboehm.com/articles/22/CUDA-MMM
        v) residual connection back into x \
        vi) ffn rmsnorm and ffn (rmsnorm, matmul, sigmoid, elementwise multiply, final matmul) \
        vii) residual connection (accum(state.x, state.xb)) 
-    - [ ] write other utility functions \
+    - [x] write other utility functions \
        i) argmax \
        ii) sample
     - [x] write the main code to execute the program that supports the following: \

@@ -267,14 +267,23 @@ void run_matmul_gpu_1d_blocktiling(float* xout, float* x, float* w, int n, int d
 // ***
 
 // checkpoint loading functions
-int Memcpy(void *w, int elements, FILE* f, void *block_cpu, void *block_gpu){
-    int count = fread(block_cpu, sizeof(float), elements, f);
+int Memcpy(void *w, int elements, FILE* f, void *scratch_cpu, void *scratch_gpu, int weight_quant_num){
+    int count = fread(scratch_cpu, sizeof(float), elements, f);
     if (count != elements) return 1; // report error by return 1 if not match
-    cudaMemcpyAsync(block_gpu, block_cpu, sizeof(float) * elements, cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(scratch_gpu, scratch_cpu, sizeof(float) * elements, cudaMemcpyHostToDevice);
+    switch (weight_quant_num){
+    case 0:
+        break;
+    case 1:
+        ConvertFP32toFP16 <<<divUp(elements, 256), 256 >>> ((half*)w, (float*)scratchGpu, elements);
+        break;
+    default:
+        throw std::invalid_argument("Unknown weight quantization number");
+    }
     return 0;
 }
 
-void checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f, int shared_weights){
+void checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f, int shared_weights, int weight_quant_num){
     // define the generic size that could contain all params 
     size_t largest_possible_size =std::max((size_t)p->vocab_size, p->n_layers * std::max(p->dim, p->hidden_dim))* p->dim * sizeof(float);
     // copy to gpu
@@ -313,13 +322,43 @@ void cudaCheck(cudaError_t error, const char *file, int line) {
   }
 };
 
-//***
+//*** utility functions 
 long time_in_ms(){
     struct timespec time;
     timespec_get(&time, TIME_UTC);
     return time.tv_sec * 1000 + time.tv_nsec / 1000000;
  }
+
+int argmax(float* v, int n) {
+     // return argmax of v in elements 0..n
+     int max_i = 0;
+     float max_p = v[0];
+     for (int i = 1; i < n; i++) {
+         if (v[i] > max_p) {
+             max_i = i;
+             max_p = v[i];
+         }
+     }
+     return max_i;
+ }
+
+int sample(float* probabilities, int n) {
+    // sample index from probabilities, they must sum to 1
+    float r = (float)rand() / (float)RAND_MAX;
+    float cdf = 0.0f;
+    for (int i = 0; i < n; i++) {
+        cdf += probabilities[i];
+        if (r < cdf) {
+            return i;
+        }
+    }
+    return n - 1; // in case of rounding errors
+ }
+
 //***
+
+
+
 
 // takes in token, pos, and model weights 
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w, int kernel_num, int weight_quant){
@@ -395,6 +434,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
     // convert half to float 
     case 1:
         ConvertFP16toFP32 <<<CEIL_DIV(p->vocab_size, 256), 256 >>> (s->logits_temp, s->logits_gpu, p->vocab_size);
+        break;
     default: 
         throw std::invalid_argument("Unknown weight quantization number");
     }
@@ -405,16 +445,56 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
 // function that selects the calculation precision in gpu 
 void run_matmul_gpu(float* output, float* input, float* weight, int input_dim, int output_dim, int hidden_dim, int kernel_num, int weight_quant_num){
-    switch (weight_quant_num){
-    case 0:
-        run_sgemm_matmul_kernel_FP32(output, input, weight, input_dim, output_dim, hidden_dim, kernel_num);
-    case 1:
-        run_sgemm_matmul_kernel_FP16(output, input, weight, input_dim, output_dim, hidden_dim, kernel_num);
-    default:
-        throw std::invalid_argument("Unknown weight quantization number");
-    }
+    run_sgemm_matmul_kernel_FP32(output, input, weight, input_dim, output_dim, hidden_dim, kernel_num, weight_quant_num);
 }
    
+void run_sgemm_matmul_kernel(void* C, void* A, void* B, int M, int N, int K, int kernel_num, int weight_quant_num) {
+    switch (kernel_num) {
+        case 0:
+            cudaError_t cudaStat;  // cudaMalloc status
+            cublasStatus_t stat;   // cuBLAS functions status
+            cublasHandle_t handle; // cuBLAS context
+            stat = cublasCreate(&handle); // initialize CUBLAS context
+            float alpha = 1.0f;
+            float beta = 0.0f;
+            switch (weight_quant_num){
+                case 0:
+                    runCublasFP32(handle, M, N, K, alpha, A, B, beta, C);
+                    break;
+                case 1:
+                    runCublasFP16(handle, M, N, K, alpha, A, B, beta, C);
+                    break;
+                default:
+                    throw std::invalid_argument("Unknown weight quantization number");
+                }
+            break;
+        case 1:
+            run_matmul_naive(C, A, B, M, N, K);
+            break;
+        case 2:
+            run_matmul_gpu_global_mem_coalesce(C, A, B, M, N, K);
+            break;
+        case 3:
+            run_matmul_shared_mem_block(C, A, B, M, N, K);
+            break;
+        case 4:
+            run_matmul_1d_blocktiling(C, A, B, M, N, K);
+            break;
+        case 5:
+            run_matmul_2d_blocktiling(C, A, B, M, N, K);
+            break;
+        case 6:
+            run_matmul_vectorized(C, A, B, M, N, K);
+            break;
+        case 7:
+            run_matmul_warptiling(C, A, B, M, N, K);
+            break;
+        default:
+            throw std::invalid_argument("Unknown kernel number");
+    }
+}
+
+
 void run_sgemm_matmul_kernel_FP32(float* C, float* A, float* B, int M, int N, int K, int kernel_num) {
     switch (kernel_num) {
         
@@ -448,6 +528,8 @@ void run_sgemm_matmul_kernel_FP32(float* C, float* A, float* B, int M, int N, in
     case 7:
         run_matmul_warptiling(C, A, B, M, N, K);
         break;
+    case 8:
+        run_matmul_cubreduce(C,A,B,M,N,K);
     default:
         throw std::invalid_argument("Unknown kernel number");
     }
@@ -459,6 +541,8 @@ int main(char* checkpoint){
     char *checkpoint = NULL;  // e.g. out/model.bin
     float temperature = 0.9f; // e.g. 1.0, or 0.0
     int steps = 256;          // max number of steps to run for, 0: use seq_len
+    int weight_quant_num = 0; // default running gpu calc with 32fp
+    int kernel_num = 1;       // default using naive kernel 
     //  // argparse, 'checkpoint' is the necessary arg
     if (argc < 2) {
         printf("Usage: %s <checkpoint_file> [temperature] [steps]\n", argv[0]);
@@ -477,6 +561,14 @@ int main(char* checkpoint){
     // option of running with cpu or gpu
     if (argc >=5) {
         use_gpu = atoi(argv[4]); 
+    }
+    // option of different implementation of matmul kernel 
+    if (argc >=6){
+        kernel_num = atoi(argv[5]);
+    }
+    // option of different gpu calclulation precision 
+    if (argc >= 7){
+        weight_quant_num = atoi(argv[6]); 
     }
     // ***
     //   TODO: support cpu and gpu
@@ -546,7 +638,7 @@ int main(char* checkpoint){
     int pos = 0;
     while (pos < config.seq_len) {
          // forward the transformer to get logits for the next token
-        transformer(token, pos, &config, &state, &weights);
+        transformer(token, pos, &config, &state, &weights, kernel_num, weight_quant_num);
 
         // sample the next token
         if(temperature == 0.0f) {
