@@ -182,7 +182,7 @@ void run_RoPERotation_gpu(float *q, float *k, float *f_real, float *f_imag, int 
     RoPERotation_kernel <<<num_heads, head_size / 2 >>> (q, k, f_real, f_imag, num_heads, head_size);
 }
 
-void run_softmax_gpu(float* x, int size){
+__global__ void run_softmax_gpu(float* x, int size){
     using BlockReduce = cub::BlockReduce<float, 1024>;
     __shared__ typename BlockReduce::TempStorage temp;
     __shared__ float shared_val;
@@ -643,7 +643,7 @@ int main(char* checkpoint){
         // sample the next token
         if(temperature == 0.0f) {
             // greedy argmax sampling
-            next = argmax_gpu(state.logits, config.vocab_size);
+            next = argmax(state.logits, config.vocab_size);
         } else {
             // apply the temperature to the logits
             for (int q=0; q<config.vocab_size; q++) {

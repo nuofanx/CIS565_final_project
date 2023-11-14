@@ -130,3 +130,74 @@ A block processes one row of computation and uses Shared Memory to store the int
 - Pack Half types into Half2 for access, increasing instruction transfer without changing latency, similar to CUDA template for element-wise kernels optimization.
 
 - Bank Conflicts in Shared Memory.
+
+# Results 
+1. Speed of CUDA implementation vs python implementation vs pure C++ implementation 
+<!-- include table -->
+Inference speed using implementations of different language  
+| python | pure C++ | C++ and CUDA |
+| ------------- | ------------- | ------------- |
+| Content Cell  | Content Cell  | Content Cell |
+
+2. Effect of matmul operation (gpu calculation speed improvment and analysis)
+Calculations: 
+Naive implementation
+| ------------- | -------------  | 
+| **Total FLOPS** |               = GFLOPS|
+| **Total data to read (minimum!)**  |  = MB|
+| **Total data to store**  |  = MB|
+
+3. GPU specification 
+| Metric | Value |
+| ------------- | ------------- | 
+| Compute Capability | Content Cell  | 
+| max threads per block |  |
+| max threads per multiprocessor | | 
+| threads per warp | |
+| warp allocation granularity | |
+
+the resource demands for our kernel:
+|Registers per Thread	| 37|
+|SMEM per Block	|8192 B|
+|Threads per Block|	1024|
+
+Comparison 
+
+|        | Naive implementation  |  Global Memory Coalescing| Shared Memory Blocking|  
+| ------------- | ------------- | ------------- |
+| **Memory throughput**| Content Cell  | Content Cell | Content Cell |
+| **Performance** | Content Cell  | Content Cell | Content Cell |
+
+|        | 1d blocktiling  |  2d blocktiling| Shared Memory Blocking|  
+| ------------- | ------------- | ------------- |
+| **results per thread** | Content Cell    |  
+| **Performance** | Content Cell  | Content Cell | 
+| **memory access**| Content Cell  | Content Cell | 
+
+
+
+Performance of the best kernel so far against cuBLAS across increasing matrix size:
+
+<!-- Include figure -->
+<!-- ![best performing kernel vs cuBLAS] (/assets/images/electrocat.png) -->
+
+3. Effect of multihead attention (speed improvement and anaylsis) 
+
+
+4. Effect of weight quantization on inference quality vs speed
+
+Inference speed comparison with/without Weight quantization
+|                | **FP16** | **FP32**|
+| **Naive**  | Content Cell    |  Content Cell |
+| **Global Memory Coalescing** | Content Cell |Content Cell |
+| **Shared Memory Blocking** | Content Cell |Content Cell |
+| **Shared Memory Blocking** | Content Cell |Content Cell |
+| **1d blocktiling** | Content Cell |Content Cell |
+| **2d blocktiling** | Content Cell |Content Cell |
+| **warptiling** | Content Cell |Content Cell |
+| **cub reduce** | Content Cell  | Content Cell | 
+| **cuBLAS** | Content Cell  | Content Cell | 
+
+Inference result
+Before:
+After:
