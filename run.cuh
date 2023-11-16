@@ -21,7 +21,7 @@ void run_siLU_gpu(float* a, float* b, int size);
 void run_accum_gpu(float *a, float *b, int size);
 void run_rmsnorm_gpu(float* o, float* x, float* weight, int size);
 void run_softmax_gpu(float* x, int size);
-void run_matmul_gpu(float* xout, float* x, float* w, int n, int d);
+void run_matmul_gpu(float* xout, float* x, float* w, int n, int d, int kernel_num, int weight_quant_num);
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w, int kernel_num, int weight_quant_num);
 // utility 
 int sample(float* probabilities, int n);

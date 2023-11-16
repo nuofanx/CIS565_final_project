@@ -58,3 +58,12 @@
 1. Added result section with placeholders for experiment data and figures.
 2. Moved changes log from readme.md to log.md.
 
+# Changes (until Nov.15)
+1. Added sgemm_run.cu to test the matmul kernels with squared matrices.
+2. Fixed a bug - added cublas destory in run_sgemm_matmul_kernel function in run.cu.
+3. Added gen_results.sh to call each kernel function and then plot the results at the end.
+
+# Changes (until Nov.16)
+1. Added table to summarize the Block Number /Thread Number/ Element per thread used by each kernel
+2. Added introduction to each kernel method in matmul_kernels.txt. 
+3. Added areas of improvement and possible methods in report.txt.

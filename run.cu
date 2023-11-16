@@ -167,9 +167,10 @@ __global__ void multiHeadAttentionKernel_horizontal(){
 
 }
 
-__global__ void multiHeadAttentionKernel_horizontal(){
-
-}
+void runMultiHeadAttention(float *output, float *q, float *key_cache, float *value_cache, int num_heads, int head_size, int loff, int seq_len) {
+    int dim = head_size * num_heads;
+    MultiHeadAttentionKernel_naive <<<num_heads, 1024>>> (output, q, key_cache, value_cache, num_heads, head_size, loff, seq_len, dim);
+ }
 
 void run_rmsnorm_gpu(float* o, float* x, float* weight, int size){
     // calculate the blocks needed 
@@ -380,9 +381,9 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
         run_rmsnorm_gpu(s->xb, x, w->rms_att_weight + l * dim, dim);
 
         // qkv matmuls for this position
-        run_matmul_gpu(s->q, s->xb, w->wq + l * dim * dim, dim, dim);
-        run_matmul_gpu(s->k, s->xb, w->wk + l * dim * dim, dim, dim);
-        run_matmul_gpu(s->v, s->xb, w->wv + l * dim * dim, dim, dim);
+        run_matmul_gpu(s->q, s->xb, w->wq + l * dim * dim, dim, dim, kernel_num, weight_quant_num);
+        run_matmul_gpu(s->k, s->xb, w->wk + l * dim * dim, dim, dim, kernel_num, weight_quant_num);
+        run_matmul_gpu(s->v, s->xb, w->wv + l * dim * dim, dim, dim, kernel_num, weight_quant_num);
 
         // apply RoPE rotation to the q and k vectors for each head
         run_RoPERotation_gpu(s->q, s->k, freq_cis_real_row, freq_cis_imag_row, p->n_heads, head_size);
@@ -445,7 +446,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
 // function that selects the calculation precision in gpu 
 void run_matmul_gpu(float* output, float* input, float* weight, int input_dim, int output_dim, int hidden_dim, int kernel_num, int weight_quant_num){
-    run_sgemm_matmul_kernel_FP32(output, input, weight, input_dim, output_dim, hidden_dim, kernel_num, weight_quant_num);
+    run_sgemm_matmul_kernel(output, input, weight, input_dim, output_dim, hidden_dim, kernel_num, weight_quant_num);
 }
    
 void run_sgemm_matmul_kernel(void* C, void* A, void* B, int M, int N, int K, int kernel_num, int weight_quant_num) {
@@ -467,6 +468,7 @@ void run_sgemm_matmul_kernel(void* C, void* A, void* B, int M, int N, int K, int
                 default:
                     throw std::invalid_argument("Unknown weight quantization number");
                 }
+            cublasDestroy(handle);
             break;
         case 1:
             run_matmul_naive(C, A, B, M, N, K);
@@ -491,47 +493,6 @@ void run_sgemm_matmul_kernel(void* C, void* A, void* B, int M, int N, int K, int
             break;
         default:
             throw std::invalid_argument("Unknown kernel number");
-    }
-}
-
-
-void run_sgemm_matmul_kernel_FP32(float* C, float* A, float* B, int M, int N, int K, int kernel_num) {
-    switch (kernel_num) {
-        
-    case 0:
-        cudaError_t cudaStat;  // cudaMalloc status
-        cublasStatus_t stat;   // cuBLAS functions status
-        cublasHandle_t handle; // cuBLAS context
-        stat = cublasCreate(&handle); // initialize CUBLAS context
-        float alpha = 1.0f;
-        float beta = 0.0f;
-        runCublasFP32(handle, M, N, K, alpha, A, B, beta, C);
-        break;
-    case 1:
-        run_matmul_naive(C, A, B, M, N, K);
-        break;
-    case 2:
-        run_matmul_gpu_global_mem_coalesce(C, A, B, M, N, K);
-        break;
-    case 3:
-        run_matmul_shared_mem_block(C, A, B, M, N, K);
-        break;
-    case 4:
-        run_matmul_1d_blocktiling(C, A, B, M, N, K);
-        break;
-    case 5:
-        run_matmul_2d_blocktiling(C, A, B, M, N, K);
-        break;
-    case 6:
-        run_matmul_vectorized(C, A, B, M, N, K);
-        break;
-    case 7:
-        run_matmul_warptiling(C, A, B, M, N, K);
-        break;
-    case 8:
-        run_matmul_cubreduce(C,A,B,M,N,K);
-    default:
-        throw std::invalid_argument("Unknown kernel number");
     }
 }
 
@@ -565,6 +526,10 @@ int main(char* checkpoint){
     // option of different implementation of matmul kernel 
     if (argc >=6){
         kernel_num = atoi(argv[5]);
+        if (kernel_num < 0 || kernel_num > 12) {
+            std::cerr << "Please enter a valid kernel number (0-12)" << std::endl;
+            exit(EXIT_FAILURE);
+        }
     }
     // option of different gpu calclulation precision 
     if (argc >= 7){
@@ -577,9 +542,7 @@ int main(char* checkpoint){
 
 	// seed rng with time. if you want deterministic behavior use temperature 0.0
     srand((unsigned int)time(NULL)); 
-    // read in the model.bin file
-    Config config;
-    TransformerWeights weights;
+  
     // init structs
     Config config;
     TransformerWeights weights;
@@ -673,7 +636,6 @@ int main(char* checkpoint){
     for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
     free(vocab);
     return 0;
-   
 }
 
 
