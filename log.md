@@ -67,3 +67,8 @@
 1. Added table to summarize the Block Number /Thread Number/ Element per thread used by each kernel
 2. Added introduction to each kernel method in matmul_kernels.txt. 
 3. Added areas of improvement and possible methods in report.txt.
+
+# Changes (until Nov.17)
+1. Added CMakeList.txt with two executable files to build: sgemm and inference. The first one tests the matmul kernels and the second one runs the inference with kernel number and weight quantization number specified and calculates time.
+2. Created and moved source code to src folder except run.cu and sgemm_run.cu.
+     
