@@ -36,6 +36,4 @@ __global__ void matmulKernel_cubreduce(void* output, void* input, void* weight, 
             throw std::invalid_argument("Unknown weight quantization number");
 
     }
-
- 
- }
+}

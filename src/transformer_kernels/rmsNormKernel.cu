@@ -2,10 +2,8 @@
 #pragma once
 
 #include <algorithm>
-#include <cassert>
 #include <cstdio>
 #include <cstdlib>
-#include <cublas_v2.h>
 #include <cuda_runtime.h>
 
 // An important point to bear in mind is that when two consecutive load operations are carried out on the same addresses, the second operation is likely to get the data from the GPU cache, meaning it doesn't cost double DDR loading to perform two passes within the same Triton program.

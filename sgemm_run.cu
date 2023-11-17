@@ -2,7 +2,8 @@
 #include <cstdio>
 #include <fstream>
 #include <iostream>
-#include <runner.cuh>
+#include "src/run.cuh"
+#include <cuda_runtime.h>
 
 #define cudaCheck(err) (cudaCheck(err, __FILE__, __LINE__))
 
@@ -15,14 +16,21 @@ int main(int argc, char **argv) {
     // get environment variable for device
     int deviceIdx = 0;
     if (getenv("DEVICE") != NULL) {
-    deviceIdx = atoi(getenv("DEVICE"));
+        deviceIdx = atoi(getenv("DEVICE"));
     }
+    // get kernel number
+    int kernel_num = std::stoi(argv[1]);
+    if (kernel_num < 0 || kernel_num > 12) {
+        std::cerr << "Please enter a valid kernel number (0-12)" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
     cudaCheck(cudaSetDevice(deviceIdx));
 
     printf("Running kernel %d on device %d.\n", kernel_num, deviceIdx);
 
     std::vector<int> SIZE = {128, 256, 512, 1024, 2048, 4096};
-
+    
     // Using cudaEvent for gpu stream timing, cudaEvent is equivalent to
     // publishing event tasks in the target stream
     float elapsed_time;
@@ -63,6 +71,7 @@ int main(int argc, char **argv) {
                         cudaMemcpyHostToDevice));
 
     for (int size : SIZE) {
+        
         m = n = k = size;
 
         std::cout << "dimensions(m=n=k) " << m << std::endl;

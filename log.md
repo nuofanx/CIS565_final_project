@@ -71,4 +71,19 @@
 # Changes (until Nov.17)
 1. Added CMakeList.txt with two executable files to build: sgemm and inference. The first one tests the matmul kernels and the second one runs the inference with kernel number and weight quantization number specified and calculates time.
 2. Created and moved source code to src folder except run.cu and sgemm_run.cu.
-     
+
+# Changes (until Nov.18)
+1. Moved runner functions in run.cu to /src/run.cu, and renamed original run.cu to inference.cu.
+2. Modified input type from float* to void* for all kernel functions to accommodate half/full precision calculation.
+3. Fixed errors when calling matmul kernel functions with template specification.
+4. Added check_params.cpp to check if kernel functions have received valid input dimensions. 
+5. Changed log.txt to log.md, added result tables and parameter informations to it.
+
+# Changes (until Nov.19)
+1. Changed softmax function to __device__ type function that only gets called by transformer function and moved it to transformer_kernels folder. Wrote another cpu version of softmax in run.cu. 
+2. Fixed mismatches between function declaration and definitions in run.cu and run.cuh 
+3. Moved runner functions from inference.cu to run.cu to match the function declarations in run.cuh.
+4. Added sgemm_run_test.cu to test simple model loading and matmul kernel calling.
+5. Added training procedure in readme for customized model.
+
+
