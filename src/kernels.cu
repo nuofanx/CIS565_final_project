@@ -1,4 +1,10 @@
+// pragma once is a non-standard but widely supported preprocessor directive designed to cause the current source file to be included only once in a single compilation.
 #pragma once
+// It's used to replace the following preprocessor code:
+#ifndef KERNELS_CUH
+#define KERNELS_CUH
+
+// A good convention is adding both to support legacy compilers 
 
 #include "matmul_kernels/1_naive.cu"
 #include "matmul_kernels/2_global_mem_coalesce.cu"
@@ -17,3 +23,5 @@
 
 #include "weight_quantization_kernels/half_to_full.cu" 
 #include "weight_quantization_kernels/full_to_half.cu" 
+
+#endif

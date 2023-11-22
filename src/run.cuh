@@ -1,5 +1,5 @@
-#ifndef RUN_H
-#define RUN_H
+#ifndef RUN_CUH
+#define RUN_CUH
 
 #include <stdio.h>
 
@@ -20,14 +20,13 @@ int checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f, int share
 void run_siluElementwiseMul_gpu(float* a, float* b, int size);
 void run_accum_gpu(float *a, float *b, int size);
 void run_rmsnorm_gpu(float* o, float* x, float* weight, int size);
-void run_softmax_gpu(float* x, int size);
-void run_matmul_gpu(float* xout, float* x, float* w, int n, int d, int kernel_num, int weight_quant_num);
+void run_matmul_gpu(void* xout, void* x, void* w, int n, int d, int kernel_num, int weight_quant_num);
+
 void softmax(float* x, int size);
 void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights* w, int kernel_num, int weight_quant_num);
 // utility 
 int sample(float* probabilities, int n);
 int argmax(float* v, int n);
 long time_in_ms();
-
 
 #endif

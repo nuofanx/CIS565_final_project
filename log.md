@@ -86,4 +86,23 @@
 4. Added sgemm_run_test.cu to test simple model loading and matmul kernel calling.
 5. Added training procedure in readme for customized model.
 
+# Changes (until Nov.20)
+1. Added vec matrix multiplication in case when one matrix is a vector.
+2. Added matvec_run.cu as another executable file to build to run tests for vec matrix multiplication.
+
+# TODO
+1. Test the correctness of matmul kernels and cublas kernel on simple squared matrices.
+2. Test matmul kernel and cublas kernel against various matrix sizes and generated flop plot for running square matrices.
+4. Test matmul kernel and cublas kernel on non-square matrices.
+5. Test model loading and ran simple inference.
+6. Generate speed comparison result of various kernels with the same weight quantization scheme.
+
+# Changes (until Nov.21)
+
+# TODO
+1. Test the correctness of half precision feature.
+2. Generate prompt with half precison and full precision.
+3. Use the NS Profiler and complete the hand calculations.
+4. Finish the report. 
+
 

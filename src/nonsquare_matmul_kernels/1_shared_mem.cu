@@ -1,3 +1,4 @@
+#pragma once 
 #include "1_shared_mem.cuh"
 
 __global__ void MatMulKernel(Matrix A, Matrix B, Matrix C){

@@ -1,10 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cassert>
-#include <cstdio>
-#include <cstdlib>
-#include <cublas_v2.h>
 #include <cuda_runtime.h>
 
 __global__ void elementwiseAdd(float* dest, float * src, int size, int weight_quant_num) {

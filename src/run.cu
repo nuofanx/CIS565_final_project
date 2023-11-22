@@ -168,23 +168,23 @@ int argmax(float* v, int n) {
 }
 
 void softmax(float* x, int size) {
-     // find max value (for numerical stability)
-     float max_val = x[0];
-     for (int i = 1; i < size; i++) {
-         if (x[i] > max_val) {
-             max_val = x[i];
-         }
-     }
-     // exp and sum
-     float sum = 0.0f;
-     for (int i = 0; i < size; i++) {
-         x[i] = expf(x[i] - max_val);
-         sum += x[i];
-     }
-     // normalize
-     for (int i = 0; i < size; i++) {
-         x[i] /= sum;
-     }
+    // find max value (for numerical stability)
+    float max_val = x[0];
+    for (int i = 1; i < size; i++) {
+        if (x[i] > max_val) {
+            max_val = x[i];
+        }
+    }
+    // exp and sum
+    float sum = 0.0f;
+    for (int i = 0; i < size; i++) {
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+    // normalize
+    for (int i = 0; i < size; i++) {
+        x[i] /= sum;
+    }
 }
 
 int sample(float* probabilities, int n) {
@@ -198,7 +198,7 @@ int sample(float* probabilities, int n) {
         }
     }
     return n - 1; // in case of rounding errors
- }
+}
 
 //***
 
@@ -287,7 +287,7 @@ void transformer(int token, int pos, Config* p, RunState* s, TransformerWeights*
 
          // residual connection
         run_accum_gpu(x, s->xb, dim);
-     }
+    }
 
     // final rmsnorm
     run_rmsnorm_gpu(x, x, w->rms_final_weight, dim);
@@ -342,21 +342,21 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f, int shar
     if (memcpy(w->wv, p->n_layers * p->dim * p->dim, f, block_cpu, block_gpu)) return 1;
     if (memcpy(w->wo, p->n_layers * p->dim * p->dim, f, block_cpu, block_gpu)) return 1;
     if (memcpy(w->rms_ffn_weight, p->n_layers * p->dim, f, block_cpu, block_gpu)) return 1;
-     if (memcpy(w->w1, p->n_layers * p->dim * p->hidden_dim, f, block_cpu, block_gpu)) return 1;
-     if (memcpy(w->w2, p->n_layers * p->hidden_dim * p->dim, f, block_cpu, block_gpu)) return 1;
-     if (memcpy(w->w3, p->n_layers * p->dim * p->hidden_dim, f, block_cpu, block_gpu)) return 1;
-     if (memcpy(w->rms_final_weight, p->dim, f, block_cpu, block_gpu)) return 1;
+    if (memcpy(w->w1, p->n_layers * p->dim * p->hidden_dim, f, block_cpu, block_gpu)) return 1;
+    if (memcpy(w->w2, p->n_layers * p->hidden_dim * p->dim, f, block_cpu, block_gpu)) return 1;
+    if (memcpy(w->w3, p->n_layers * p->dim * p->hidden_dim, f, block_cpu, block_gpu)) return 1;
+    if (memcpy(w->rms_final_weight, p->dim, f, block_cpu, block_gpu)) return 1;
 
-     int head_size = p->dim / p->n_heads;
-     if (memcpy(w->freq_cis_real, p->seq_len * head_size / 2, f, block_cpu, block_gpu)) return 1;
-     if (memcpy(w->freq_cis_imag, p->seq_len * head_size / 2, f, block_cpu, block_gpu)) return 1;
+    int head_size = p->dim / p->n_heads;
+    if (memcpy(w->freq_cis_real, p->seq_len * head_size / 2, f, block_cpu, block_gpu)) return 1;
+    if (memcpy(w->freq_cis_imag, p->seq_len * head_size / 2, f, block_cpu, block_gpu)) return 1;
 
-     if (!shared_weights)
-         if (memcpy(w->wcls, p->vocab_size * p->dim, f, block_cpu, block_gpu)) return 1;
+    if (!shared_weights)
+        if (memcpy(w->wcls, p->vocab_size * p->dim, f, block_cpu, block_gpu)) return 1;
 
-     cudaFree(block_gpu);
-     free(block_cpu);
-     return 0;
+    cudaFree(block_gpu);
+    free(block_cpu);
+    return 0;
 }
 
 void run_matmul_gpu_naive(void *C, void* A, void*B, int M, int N, int K, int weight_quant_num){
@@ -487,4 +487,43 @@ void checkpoint_init_weights(TransformerWeights *w, Config* p, FILE* f, int shar
     cudaFree(block_gpu);
     free(block_cpu);
     return 0;
+}
+
+
+// function that selects the desired matmul kernel and the calculation precision in gpu    
+void run_matmul_gpu(void* C, void* A, void* B, int M, int N, int kernel_num, int weight_quant_num) {
+    // check if the input matrices are squared matrices, if so, apply more efficiemt implementaions 
+    if (!(M == N && N==K)){
+        kernel_num = 8;
+        printf('non square matrices encountered in matrix multiplication'); 
+        fflush(stdout);   
+    } 
+    switch (kernel_num) {
+        case 0:
+            run_matmul_gpu_cublas(C,A,B, M, N, K);
+            break;
+        case 1:
+            run_matmul_naive(C, A, B, M, N, K);
+            break;
+        case 2:
+            run_matmul_gpu_global_mem_coalesce(C, A, B, M, N, K);
+            break;
+        case 3:
+            run_matmul_gpu_shared_mem_block(C, A, B, M, N, K);
+            break;
+        case 4:
+            run_matmul_gpu_1d_blocktiling(C, A, B, M, N, K);
+            break;
+        case 5:
+            run_matmul_gpu_2d_blocktiling(C, A, B, M, N, K);
+            break;
+        case 6:
+            run_matmul_gpu_vectorized(C, A, B, M, N, K);
+            break;
+        case 7:
+            run_matmul_gpu_warptiling(C, A, B, M, N, K);
+            break;
+        default:
+            throw std::invalid_argument("Unknown kernel number");
+    }
 }

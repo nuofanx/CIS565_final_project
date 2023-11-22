@@ -9,19 +9,6 @@
 #include "src/run.cuh"
 
 
-// *** 
-//   TODO: neural net functions 
-void run_accum_gpu(float *a, float *b, int size){
-    // call kernel function with block number CEIL_DIV(size, 256) and thread size 256
-    elementwiseAddKernel <<< CEIL_DIV(size, 256), 256 >>> (a, b, size);
-}
-
-//  Sigmoid Linear Unit (SiLU)  
-void run_siluElementwiseMul_gpu(float * hb, float* hb2, int size){
-    int threadNumber = 256;
-    int blockNumber = CEIL_DIV(size, );
-    siluElementwiseMulKernel<<blockNumber, threadNumber>> (hb, hb2, size);
-}
 
 // parallelization strategies and expereiments 
 // https://hd10.dev/posts/my-interests-2/cs259.pdf
@@ -31,17 +18,6 @@ void runMultiHeadAttention(float *output, float *q, float *key_cache, float *val
     int dim = head_size * num_heads;
     MultiHeadAttentionKernel_naive <<<num_heads, 1024>>> (output, q, key_cache, value_cache, num_heads, head_size, loff, seq_len, dim);
  }
-
-void run_rmsnorm_gpu(float* o, float* x, float* weight, int size){
-    // calculate the blocks needed 
-    int elementsPerThread = CEIL_DIV(size, 1024);
-    // call the kernel with one single block and 1024 threads per block 
-    rmsNormKernel<<<1,1024>>>(o, x, weight, size, elementsPerThread);
-}
-
-void run_RoPERotation_gpu(float *q, float *k, float *f_real, float *f_imag, int num_heads, int head_size) {
-    RoPERotation_kernel <<<num_heads, head_size / 2 >>> (q, k, f_real, f_imag, num_heads, head_size);
-}
 
 
 int CEIL_DIV(int a, int size){
@@ -59,45 +35,6 @@ void cudaCheck(cudaError_t error, const char *file, int line) {
   }
 };
 
-
-// function that selects the desired matmul kernel and the calculation precision in gpu    
-void run_matmul_gpu(void* C, void* A, void* B, int M, int N, int K, int kernel_num, int weight_quant_num) {
-    // check if the input matrices are squared matrices, if so, apply more efficiemt implementaions 
-    if (!(M == N && N==K)){
-        kernel_num = 8;
-        printf('non square matrices encountered in matrix multiplication'); 
-        fflush(stdout);   
-    } 
-    switch (kernel_num) {
-        case 0:
-            run_matmul_gpu_cublas(C,A,B, M, N, K);
-            break;
-        case 1:
-            run_matmul_naive(C, A, B, M, N, K);
-            break;
-        case 2:
-            run_matmul_gpu_global_mem_coalesce(C, A, B, M, N, K);
-            break;
-        case 3:
-            run_matmul_gpu_shared_mem_block(C, A, B, M, N, K);
-            break;
-        case 4:
-            run_matmul_gpu_1d_blocktiling(C, A, B, M, N, K);
-            break;
-        case 5:
-            run_matmul_gpu_2d_blocktiling(C, A, B, M, N, K);
-            break;
-        case 6:
-            run_matmul_gpu_vectorized(C, A, B, M, N, K);
-            break;
-        case 7:
-            run_matmul_gpu_warptiling(C, A, B, M, N, K);
-            break;
-        default:
-            throw std::invalid_argument("Unknown kernel number");
-    }
-}
-
 int main(char* checkpoint){
     // define model parameters
 
@@ -108,7 +45,7 @@ int main(char* checkpoint){
     int kernel_num = 1;       // default using naive kernel 
     //  // argparse, 'checkpoint' is the necessary arg
     if (argc < 2) {
-        printf("Usage: %s <checkpoint_file> [temperature] [steps]\n", argv[0]);
+        printf("Usage: %s <checkpoint_file> [temperature] [steps] [matmul_kernel] [weight_quant]\n", argv[0]);
         return 1;
     }
     if (argc >= 2) {
@@ -121,26 +58,18 @@ int main(char* checkpoint){
     if (argc >= 4) {
         steps = atoi(argv[3]);
     }
-    // option of running with cpu or gpu
-    if (argc >=5) {
-        use_gpu = atoi(argv[4]); 
-    }
     // option of different implementation of matmul kernel 
-    if (argc >=6){
-        kernel_num = atoi(argv[5]);
+    if (argc >=5){
+        kernel_num = atoi(argv[4]);
         if (kernel_num < 0 || kernel_num > 12) {
             std::cerr << "Please enter a valid kernel number (0-12)" << std::endl;
             exit(EXIT_FAILURE);
         }
     }
     // option of different gpu calclulation precision 
-    if (argc >= 7){
-        weight_quant_num = atoi(argv[6]); 
+    if (argc >= 6){
+        weight_quant_num = atoi(argv[5]); 
     }
-    // ***
-    //   TODO: support cpu and gpu
-
-    // ***
 
 	// seed rng with time. if you want deterministic behavior use temperature 0.0
     srand((unsigned int)time(NULL)); 
@@ -236,7 +165,7 @@ int main(char* checkpoint){
     free_run_state_gpu(&state);
     free_weights_gpu(&weights, shared_weights);
     for (int i = 0; i < config.vocab_size; i++) { free(vocab[i]); }
-    free(vocab);
+        free(vocab);
     return 0;
 }
 
