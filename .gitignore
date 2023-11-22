@@ -1,6 +1,6 @@
 # ignore vscode files
 .vscode/
-*.txt
+texts/
 nonsquare*/
 matvec_run.cu
 src/matvecmul*
