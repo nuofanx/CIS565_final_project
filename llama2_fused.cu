@@ -16,6 +16,8 @@ Inference for Llama-2 Transformer model in pure Cuda.
 #include <cub/cub.cuh>
 // Navidia cublas lib for matmul and matvec mul
 #include <cublas_v2.h>
+#include <cuda/std/type_traits>
+#include <cstdio>
 
 #if defined _WIN32
     #include <Windows.h>
@@ -582,7 +584,7 @@ __global__ void sample_top_p_kernel(T* sorted_logits_prefix_sum, int* indices, i
 
         // update the token indices
         *pPos = token_pos;
-        // *pPosGpu = token_pos;
+        *pPosGpu = token_pos;
     }
 }
 
@@ -635,7 +637,7 @@ __global__ void argmax_kernel(T* __restrict__ x, int size, int* result, volatile
 }
 
 
-// sample the token given the logits and some hyperparameters
+// // sample the token given the logits and some hyperparameters
 template <typename T1, typename T2>
 // sample the token given the logits and some hyperparameters
 void sample(Sampler* sampler, RunState<T1, T2>* s, bool gen_token, cudaStream_t stream) {
@@ -679,16 +681,22 @@ void sample(Sampler* sampler, RunState<T1, T2>* s, bool gen_token, cudaStream_t 
     }
 }
 
+void printDim3(dim3 gridDim, dim3 blockDim){
+    printf("Grid : {%d, %d, %d} blocks. Blocks : {%d, %d, %d} threads.\n",  
+        gridDim.x, gridDim.y, gridDim.z, blockDim.x, blockDim.y, blockDim.z);
+}
+
+
 template <typename T>
 void MultiHeadAttentionFused(T *output, T *q, T *key_cache, T* value_cache, T *att, int num_heads, int head_size, int kv_mul, int max_seq_len, int* ppos) {
     int pos = *ppos;
     int dim = head_size * num_heads;
-    // 1. Get attention scores
     int serialElements = divUp(head_size, 32);
     dim3 block_dim(32, 32);
     dim3 grid_dim1(divUp(max_seq_len, 32), num_heads);      // using max_seq_len instead of real seq_len here has measurable impact on perf (2%) :-/
     mat_vec_kernel_MHA <<< grid_dim1, block_dim, 0, stream >>> (att, q, key_cache, head_size, serialElements, head_size, head_size, dim / kv_mul, 1.0 / sqrt(head_size), pos, kv_mul);
-
+    mat_vec_kernel_MHA <<< grid_dim1, block_dim>>> (att, q, key_cache, head_size, serialElements, head_size, head_size, dim / kv_mul, 1.0 / sqrt(head_size), pos, kv_mul);
+    
     // 2. Run softmax kernel
     if (max_seq_len <= MAX_SEQ_LEN_SMEM_KERNEL)
         softmax_kernel <<< num_heads, 1024, 0, stream >>> (att, num_heads, pos);
@@ -700,59 +708,6 @@ void MultiHeadAttentionFused(T *output, T *q, T *key_cache, T* value_cache, T *a
     vec_mat_kernel_MHA <<< grid_dim2, block_dim, 0, stream >>> (output, att, value_cache, head_size, ppos, head_size, head_size, dim / kv_mul, kv_mul);
 }
 
-
-// Each block processes a single head
-template <typename T>
-__global__ void MultiHeadAttention_kernel(T* __restrict__ output, const T* __restrict__ sq,
-    const T* __restrict__ key_cache, const T* __restrict__ value_cache, 
-    int num_heads, int head_size, int loff, int seq_len, int dim) {
-    /**
-     * Kernel function to run SiLU element wise multiplication  
-     * @param   output            Address of output vector 
-     * @param   sq                Address of Q vector 
-     * @param   key_cache         Address of K vector 
-     * @param   value_cache       Address of V vector
-     * @param   num_heads         Number of attention heads
-     * @param   head_size         Number of attention heads 
-     * @param   loff              load offset 
-     * @param   seq_len           current position in the sequence  
-     * 
-     * @tparam  T                 Data type of device params
-     */
-    
-    int h = blockIdx.x;
-
-    // get the query vector for this head
-    const T* q = sq + h * head_size;
-    // attention scores for this head
-    __shared__ float att[MAX_SEQ_LEN];
-
-    // iterate over all timesteps, including the current one
-    for (int t = threadIdx.x; t < seq_len; t += blockDim.x) {
-        // get the key vector for this head and at this timestep
-        const T* k = key_cache + loff + t * dim + h * head_size;
-        // calculate the attention score as the dot product of q and k
-        float score = 0.0f;
-        for (int i = 0; i < head_size; i++)
-            score += (float)q[i] * (float)k[i];
-        score /= sqrtf(head_size);
-        // save the score to the attention buffer
-        att[t] = score;
-    }
-    __syncthreads();
-
-    // softmax the scores to get attention weights
-    softmax_gpu(att, seq_len);
-    __syncthreads();
-
-    // weighted sum of the values, store back into xb
-    for (int i = threadIdx.x; i < head_size; i += blockDim.x) {
-        float val = 0.0f;
-        for (int t = 0; t < seq_len; t++)
-            val += att[t] * (float)value_cache[loff + t * dim + h * head_size + i];
-        output[h * head_size + i] = (T)val;
-    }
-}
 
 template <typename T>
 __global__ void silu_element_wise_mul_kernel(T* dest, T* src, int size) {
@@ -999,66 +954,6 @@ void memoryMapWeight(void* op, FILE* fp, size_t bytes, void* scratch) {
 // ----------------------------------------------------------------------------
 // neural net blocks
 cudaStream_t stream;
-template <typename T>
-void accum(T* a, T* b, int size) {
-    /**
-     * Wrapper Function to run atomic add kernel  
-     *
-     * @param   a                 Address of matrix/vector a
-     * @param   b                 Address of matrix/vector b
-     * @param   size              Number of elements 
-     * 
-     * @tparam  T                 Data type of device params
-     */
-    int blocks = divUp(size, 256);
-    element_wise_add_kernel << <blocks, 256 >> > (a, b, size);
-}
-
-template <typename T>
-void rmsnorm(T* o, T* x, T* weight, int size) {
-    /**
-     * Wrapper Function to run atomic add kernel  
-     *
-     * @param   o                 Address of output vector 
-     * @param   x                 Address of state vector 
-     * @param   weight            Address of weight matrix
-     * @param   size              Number of elements 
-     * 
-     * @tparam  T                 Data type of device params
-     */
-    int elementsPerThread = divUp(size, 1024);
-    rmsnorm_kernel <<<1, 1024 >>> (o, x, weight, size, elementsPerThread);
-}
-
-void softmax(float* x, int size) {
-    /**
-     * Utility Function to convert float into probability
-     *
-     * @param   x                 Address of state vector 
-     * @param   size              Number of elements 
-     * 
-     */
-
-    // find max value (for numerical stability)
-    float max_val = x[0];
-    for (int i = 1; i < size; i++) {
-        if (x[i] > max_val) {
-            max_val = x[i];
-        }
-    }
-    // exp and sum
-    float sum = 0.0f;
-    for (int i = 0; i < size; i++) {
-        x[i] = expf(x[i] - max_val);
-        sum += x[i];
-    }
-    // normalize
-    for (int i = 0; i < size; i++) {
-        x[i] /= sum;
-    }
-}
-
-
 
 template <typename T>
 void RoPERotation(T *q, T *k, int num_heads, int num_kv_heads, int head_size, int* pPos, int loff, float rope_theta) {
@@ -1079,27 +974,6 @@ void RoPERotation(T *q, T *k, int num_heads, int num_kv_heads, int head_size, in
 }
 
 template <typename T>
-void MultiHeadAttention(T *output, T *q, T *key_cache, T *value_cache, T *att, int num_heads, int head_size, int loff, int seq_len) {
-    /**
-     * Wrapper Function to run RoPERotation_kernel
-     *
-     * @param   output            Address of output vector 
-     * @param   q                 Address of Q vector 
-     * @param   key_cache         Address of K vector 
-     * @param   value_cache       Address of V vector
-     * @param   num_heads         Number of attention heads
-     * @param   head_size         Number of attention heads 
-     * @param   loff              load offset 
-     * @param   seq_len           current position in the sequence
-     * 
-     * @tparam  T                 Data type of device params
-     */
-
-    int dim = head_size * num_heads;
-    MultiHeadAttention_kernel <<<num_heads, 1024>>> (output, q, key_cache, value_cache, att, num_heads, head_size, loff, seq_len, dim);
-}
-
-template <typename T>
 __global__ void copy_embedding_kernel(T* x, const T* __restrict__ table, int size, int* tokens, int* pPos)
 {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1108,57 +982,6 @@ __global__ void copy_embedding_kernel(T* x, const T* __restrict__ table, int siz
     int token = tokens[pos];
     int table_index = index + token * size;
     x[index] = table[table_index];
-}
-
-
-template <typename T>
-void siluElementwiseMul(T *hb, T *hb2, int size) {
-    /**
-     * Wrapper Function to run SiLU kernel
-     *
-     * @param   hb                Address of buffer for hidden dimension in the ffn (hidden_dim,)
-     * @param   hb2               Address of buffer for hidden dimension in the ffn (hidden_dim,)
-     * @param   size              Number of elements
-     * 
-     * @tparam  T                 Data type of device params
-     */
- 
-   silu_element_wise_mul_kernel <<<divUp(size, 256), 256 >>> (hb, hb2, size);
-}
-
-// one output per warp so that we can parallelize the dot product across the warp
-// Note that ~95% of total time is spent here, so optimizing this is important
-template <typename T>
-__global__ void mat_vec_kernel(T* output, T* input, T* weight, int n, int d, int numSerialElements) {
-
-    /**
-     * Wrapper Function to run mat vec multiplication kernel  
-     *
-     * @param   output               Address of output vector 
-     * @param   intput               Address of state vector 
-     * @param   weight               Address of weight matrix
-     * @param   n                    Number of elements in state vector 
-     * @param   d                    Number of rows of weight matrix 
-     * @param   numSerialElements    Number of warps 
-     * 
-     * @tparam  T                    Data type of device params
-     */
-
-    int index = blockIdx.x * blockDim.y + threadIdx.y;
-    if (index >= d)
-        return;
-
-    float sum = 0;
-    for (int i = 0; i < numSerialElements; i++) {
-        int j = i * 32 + threadIdx.x;
-        if (j < n)
-            sum += ((float)weight[index * n + j]) * ((float)input[j]);
-    }
-    using WarpReduce = cub::WarpReduce<float>;
-    __shared__ typename WarpReduce::TempStorage temp;
-    sum = WarpReduce(temp).Sum(sum);
-    if (threadIdx.x == 0)
-            output[index] = (T)sum;
 }
 
 __global__ void mat_vec_kernel(half* op, half* ip, half* wt, int n, int d, int numSerialLoads,
@@ -1227,9 +1050,8 @@ __global__ void mat_vec_kernel(T* output, T* input, T * weight, int inputElement
 }
 
 
-
 template <typename T>
-__global__ void mat_vec_kernel_MHA(T* op, T* ip, T* wt, int n, int numSerialElements,
+__global__ void mat_vec_kernel_MHA(T* op, const T* ip, const T* wt, int n, int numSerialElements,
     int ip_stride, int w_stride, int w_row_stride, float alpha, int pPos, int kv_mul) {
 
     int op_stride = pPos + 1;
@@ -1255,24 +1077,7 @@ __global__ void mat_vec_kernel_MHA(T* op, T* ip, T* wt, int n, int numSerialElem
 
     if (threadIdx.x == 0)
         output[index] = (T)sum;
-}
 
-template <typename T>
-void matmul(T* xout, T* x, T* w, int n, int d) {
-    /**
-     * Wrapper Function to run mat vec multiplication kernel  
-     *
-     * @param   xout              Address of output vector 
-     * @param   x                 Address of state vector 
-     * @param   weight            Address of weight matrix
-     * @param   size              Number of elements 
-     * 
-     * @tparam  T                 Data type of device params
-     */
-    int serialElements = divUp(n, 32);
-    dim3 block_dim(32, 4);
-    int blocks = divUp(d, 4);
-    mat_vec_kernel <<<blocks, block_dim >>> (xout, x, w, n, d, serialElements);
 }
 
 template <typename T>
@@ -1297,7 +1102,6 @@ void matmul(T* xout, T* x, T* w, int inpSize, int opSize, bool accum = false, in
 }
 
 
-
 template <typename T>
 void ffn_matvec_silu(T* xout, T* x, T* gate_w, T* up_w, int inpSize, int opSize) {
     if ((inpSize & 7) || (opSize & 7)) { printf("\nUnsupported matmul size. Exiting\n"); exit(EXIT_FAILURE); }
@@ -1314,8 +1118,6 @@ __global__ void  ffn_matvec_silu_kernel(T* __restrict__ output, T* __restrict__ 
     int index = blockIdx.x * blockDim.y + threadIdx.y;
     if (index >= opElements)
         return;
-        // matmul(s->hb, s->xb, w->w1 + l * dim * hidden_dim, dim, hidden_dim);
-        // matmul(s->hb2, s->xb, w->w3 + l * dim * hidden_dim, dim, hidden_dim);
     float gate_val = get_mat_vec(index, input, gate_weight, inputElements, opElements, numSerialElements);
     float up_val = get_mat_vec(index, input, up_weight, inputElements, opElements, numSerialElements);
 
@@ -1329,7 +1131,7 @@ __global__ void  ffn_matvec_silu_kernel(T* __restrict__ output, T* __restrict__ 
 }
 
 template <typename T1, typename T2>
-void transformer(int *pos, Config* p, RunState<T1, T2>* s, TransformerWeights<T1>* w, int fusedMHA){
+void transformer(int *pos, Config* p, RunState<T1, T2>* s, TransformerWeights<T1>* w, int seq_len){
     /**
      * Wrapper Function to run atomic add kernel  
      *
@@ -1368,14 +1170,9 @@ void transformer(int *pos, Config* p, RunState<T1, T2>* s, TransformerWeights<T1
         // apply RoPE rotation to the q and k vectors for each head
         RoPERotation(s->q, s->key_cache, p->n_heads, p->n_kv_heads, head_size, pos, loff, p->rope_theta);
 
-        if (fusedMHA){ MultiHeadAttentionFused(s->xb, s->q, s->key_cache+loff, s->value_cache+loff, s->att, p->n_heads, head_size, kv_mul, p->seq_len, pos);}
-        // else MultiHeadAttention(s->xb, s->q, s->key_cache, s->value_cache, p->n_heads, head_size, loff, pos+1);
-//    MultiHeadAttention(s->xb, s->q, s->key_cache + loff, s->value_cache + loff, s->att, p->n_heads, head_size, kv_mul, seq_len_bin, pPos);
-        // final matmul to get the output of the attention
+        MultiHeadAttentionFused(s->xb, s->q, s->key_cache+loff, s->value_cache+loff, s->att, p->n_heads, head_size, kv_mul, seq_len, pos);
+        // final matmul to get the output of the attention with fused accum 
         matmul(s->x, s->xb, w->layers[l].wo, dim, dim, true);
-
-        // // residual connection back into x
-        // accum(x, s->xb2, dim);
 
         // ffn rmsnorm
         rmsnorm(s->xb, x, w->layers[l].rms_ffn_weight, dim);
@@ -1384,7 +1181,7 @@ void transformer(int *pos, Config* p, RunState<T1, T2>* s, TransformerWeights<T1
         // apply gate proj and up proj and then the silu activation in a single fused kernel
         ffn_matvec_silu(s->hb, s->xb, w->layers[l].wgate, w->layers[l].wup, dim, hidden_dim);
  
-          // final matmul (down proj) to get the output of the ffn fused with residual connection back into x
+        // final matmul (down proj) to get the output of the ffn fused with residual connection back into x
         matmul(s->x, s->hb, w->layers[l].wdown, hidden_dim, dim, true);
     }
 
@@ -1647,20 +1444,21 @@ __global__ void convert_fp16_to_fp32(float* out, T* in, int elements) {
 
 
 template <typename T1, typename T2>
-void run_transformer(bool gen_token, Config* config, RunState<T1, T2>* state, TransformerWeights<T1>* weights, bool copyLogits, Sampler *pSampler, int fusedMHA) {
-    transformer(state->pos, config, state, weights, fusedMHA);
+void run_transformer(bool gen_token, Config* config, RunState<T1, T2>* state, TransformerWeights<T1>* weights, bool copyLogits, Sampler *pSampler) {
+    int seq_len = state->shared_data->pos + 1;
+    transformer(state->pos, config, state, weights, seq_len);
     if (copyLogits) {
         // copy to the right slot in logits_array (and convert to FP32)
         // we compute perplexity on the CPU later.
         float* pOutput = state->logits_array + config->vocab_size * state->shared_data->pos;
         convert_fp16_to_fp32 << < divUp(config->vocab_size, 128), 128, 0, stream >> > (pOutput, state->logits, config->vocab_size);
     }
-    sample(pSampler, state, gen_token, stream);
+    // sample(pSampler, state, gen_token, stream);
 }
 
 template <typename T1, typename T2>
 void generate_tokens(char *prompt, char* checkpoint, int steps, Tokenizer* tokenizer, Sampler* pSampler, Config* config, 
-TransformerWeights<T1>* weights, RunState<T1, T2>* state, int shared_weights, int weight_quant_num, int fusedMHA, unsigned long rng_seed){
+TransformerWeights<T1>* weights, RunState<T1, T2>* state, int shared_weights, int weight_quant_num, unsigned long rng_seed){
     /**
      * Function to load config, model and tokenizer, and then generate tokens with different param precision on deivce 
 
@@ -1709,7 +1507,7 @@ TransformerWeights<T1>* weights, RunState<T1, T2>* state, int shared_weights, in
         // the idea is to keep GPU working in parallel with any CPU work (e.g, printing tokens to console).
         cudaStreamSynchronize(stream);
         // Perf note: don't put CPU work here "before" calling transformer as it won't overlap with GPU execution.
-        run_transformer(pos >= num_prompt_tokens - 1, config, state, weights, false, pSampler, fusedMHA); // forward the transformer to get next token
+        run_transformer(pos >= num_prompt_tokens - 1, config, state, weights, false, pSampler); // forward the transformer to get next token
 
         if (pos > 0) {
             next = state->shared_data->tokens[pos];  // Note: this is output token from previous iteration
@@ -1743,7 +1541,7 @@ TransformerWeights<T1>* weights, RunState<T1, T2>* state, int shared_weights, in
     Sleep(1000);
 }
 
-int run_inference_fp16(char* checkpoint, char* prompt, float temperature, float topp, int steps, unsigned long rng_seed, int weight_quant_num, int fusedMHA){
+int run_inference_fp16(char* checkpoint, char* prompt, float temperature, float topp, int steps, unsigned long rng_seed, int weight_quant_num){
     /**
      * Function to load config, model and tokenizer, and then generate tokens with param precision 'half (fp16)' on deivce 
 
@@ -1785,12 +1583,14 @@ int run_inference_fp16(char* checkpoint, char* prompt, float temperature, float 
     build_tokenizer(&tokenizer, default_tokenizer_path, config.vocab_size);
     // create and init the application RunState
     malloc_run_state(&state, &config);
-    generate_tokens(prompt, checkpoint, steps, &tokenizer, &sampler, &config, &weights, &state, shared_weights, weight_quant_num, fusedMHA, rng_seed);
-   
+    generate_tokens(prompt, checkpoint, steps, &tokenizer, &sampler, &config, &weights, &state, shared_weights, weight_quant_num, rng_seed);
+    free_sampler(&sampler);
+    free_tokenizer(&tokenizer);
+
     return 0;
 }
 
-int run_inference_fp32(char* checkpoint, char* prompt, float temperature, float topp, int steps, unsigned long rng_seed, int weight_quant_num, int fusedMHA){
+int run_inference_fp32(char* checkpoint, char* prompt, float temperature, float topp, int steps, unsigned long rng_seed, int weight_quant_num){
     /**
      * Function to load config, model and tokenizer, and then generate tokens with param precision 'full (fp32)' on deivce 
 
@@ -1832,7 +1632,8 @@ int run_inference_fp32(char* checkpoint, char* prompt, float temperature, float 
 
     // create and init the application RunState
     malloc_run_state(&state, &config);
-    generate_tokens(prompt, checkpoint, steps, &tokenizer, &sampler, &config, &weights, &state, shared_weights, weight_quant_num, fusedMHA, rng_seed);
+    generate_tokens(prompt, checkpoint, steps, &tokenizer, &sampler, &config, &weights, &state, shared_weights, weight_quant_num, rng_seed);
+    free_sampler(&sampler);    
     free_tokenizer(&tokenizer);
     return 0;
 }
@@ -1846,8 +1647,9 @@ int main(int argc, char *argv[]) {
     int steps = 256;          // max number of steps to run for, 0: use seq_len
     char *prompt = NULL;      // prompt string
     int weight_quant = 1;     // default using half data type for device params 
-    int fusedMHA = 1;
     float topp = 0.6; 
+    printf("parsing arguments");
+    Sleep(1000);
     // 'checkpoint' is necessary arg
     if (argc < 2) {
         printf("Usage: %s <checkpoint_file> [weight_quant] [steps] [temperature] [prompt]\n", argv[0]);
@@ -1872,10 +1674,6 @@ int main(int argc, char *argv[]) {
         prompt = argv[5];
     }
 
-    if (argc >= 7) {
-        // optional fusedMHA for faster inference 
-        fusedMHA = atoi(argv[6]);
-    }
     // seed rng with time. if you want deterministic behavior use temperature 0.0
     unsigned long rng_seed;
     rng_seed = (unsigned int)time(NULL);
@@ -1884,12 +1682,12 @@ int main(int argc, char *argv[]) {
     // read in the model.bin file
     if (weight_quant == 1){
         printf("using half precision on device\n");
-       
-        // if (run_inference_fp16(checkpoint, prompt, temperature, topp, steps, rng_seed, weight_quant, fusedMHA)) return 1;
+        Sleep(1000);
+        if (run_inference_fp16(checkpoint, prompt, temperature, topp, steps, rng_seed, weight_quant)) return 1;
     } else{
         printf("using full precision on device\n");
-       
-        if (run_inference_fp32(checkpoint, prompt, temperature, topp, steps, rng_seed, weight_quant, fusedMHA)) return 1;
+        Sleep(1000);
+        if (run_inference_fp32(checkpoint, prompt, temperature, topp, steps, rng_seed, weight_quant)) return 1;
     }
     return 0;
 
