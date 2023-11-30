@@ -37,12 +37,14 @@ For ease of use, all the essential code for each task is consolidated within a s
 |verify matvec kernel       |nvcc gemv_test.cu -o build/gemv  |start build/sgemv_test.exe  |
 |matvec kernel benchmarking |nvcc sgemv.cu -o build/sgemv     |start build/sgemv.exe       | 
 |matmul kernel benchmarking |nvcc sgemm.cu -o build/sgemm     |start build/sgemm.exe       |
+|MHA benchmarking           |nvcc mha_compare.cu -o build/mha_compare     |start build/mha_compare.exe       |
 |llama2 inference with CUDA |nvcc llama2.cu -o build/llama2   |start build/llama2.exe "MODEL_NAME"    |
 
 where MODEL_NAME is any of ["stories15M.bin", "stories52M.bin", "stories110M.bin"]
 
 -compliation tips:\
 *if Nividia cublas libarary is not linked properly, add [-lcublas] \
+*if the compiler complains about operators on half daat type, add -arch=sm_XX where XX is the compute capability of your GPU. If the error persists, it's likely that some features used in this project is not supported on this device.\
 *if path to build tool is not found, add path manually with [-ccbin "PATH_TO_VS_BUILD_TOOL"] 
 
 Example: \
@@ -57,6 +59,7 @@ Once the executable files are generated and executed, users can utilize the corr
 |---------------------------------------|---------------------------------|
 |generate matmul benchmarking result    | python gen_sgemm_results.py     |
 |generate matvecmul benchmarking result | python gen_sgemv_results.py     |
+|generate mha benchmarking result       | python gen_mha_results.py       |
 |generate llama2 inference benchmarking | python gen_inference_results.py |
 *results are generated and updated in the README.md file.
 
@@ -98,6 +101,20 @@ GFLOPs at matrix size 4096x4096:
 <!-- sgemm_benchmark_results -->
 
 In terms of matrix matrix multiplication, we can see that, cuBLAS library provides superior performance in terms of GFLOP/s. With all the optimization techniques used, the custom matmul kernel only achieves about 91% speed of its CuBLAS counterpart.
+
+# MHA implementation fusion vs vertical parallelization 
+![](fusion_benchmark_results.png)
+<!-- fusion_benchmark_results -->
+| method   |   dim |   time |
+|:---------|------:|-------:|
+| fusion   |   288 |   1.54 |
+| fusion   |  1024 |   4    |
+| fusion   |   512 |   3    |
+| vertical |   288 |   1.3  |
+| vertical |  1024 |   3.8  |
+| vertical |   512 |   2.5  |
+<!-- fusion_benchmark_results -->
+
 
 ## inference benchmarking result 
 ![](inference_benchmark_results.png)

@@ -106,7 +106,6 @@ struct RunState{
     // current wave of activations
     T1* x; // activation at current time stamp (dim,)
     T1* xb; // same, but inside a residual branch (dim,)
-    T1* xb2; // an additional buffer just for convenience (dim,)
     T1* hb; // buffer for hidden dimension in the ffn (hidden_dim,)
     T1* hb2; // buffer for hidden dimension in the ffn (hidden_dim,)
     T1* q; // query (dim,)
@@ -751,7 +750,6 @@ void malloc_run_state(RunState<T1, T2>* s, Config* p) {
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
     alloc_gpu_space(s->x, p->dim, sizeof(T1));
     alloc_gpu_space(s->xb, p->dim, sizeof(T1));
-    alloc_gpu_space(s->xb2, p->dim, sizeof(T1));
     alloc_gpu_space(s->hb, p->hidden_dim, sizeof(T1));
     alloc_gpu_space(s->hb2, p->hidden_dim, sizeof(T1));
     alloc_gpu_space(s->q, p->dim, sizeof(T1));
@@ -764,7 +762,7 @@ void malloc_run_state(RunState<T1, T2>* s, Config* p) {
     cudaMallocHost((void**)&s->shared_data, sizeof(SharedData));
 
     // ensure all mallocs went fine
-    if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q || !s-> att || !s->key_cache
+    if (!s->x || !s->xb || !s->hb || !s->hb2 || !s->q || !s-> att || !s->key_cache
         || !s->value_cache || !s->logits) {
         printf("malloc failed!\n");
         exit(1);
@@ -784,7 +782,6 @@ void free_run_state(RunState<T1, T2>* s) {
 
     cudaFree(s->x);
     cudaFree(s->xb);
-    cudaFree(s->xb2);
     cudaFree(s->hb);
     cudaFree(s->hb2);
     cudaFree(s->q);
