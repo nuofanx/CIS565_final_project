@@ -815,41 +815,6 @@ void malloc_run_state(RunState<T1, T2>* s, Config* p) {
         exit(1);
     }
 }
-// template<typename T1, typename T2>
-// void malloc_run_state(RunState<T1, T2>* s, Config* p) {
-//     /**
-//      * Function to allocate device memory
-//      *
-//      * @param   s          Address of RunState struct 
-//      * @param   p          Address of Config struct 
-//      *
-//      * @tparam  T1         Data type of device params
-//      * @tparam  T2         Data type of host params
-//      */
-//     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
-//     cudaMalloc((void**)&s->x, p->dim * sizeof(T1));
-//     cudaMalloc((void**)&s->xb, p->dim * sizeof(T1));
-//     cudaMalloc((void**)&s->xb2, p->dim * sizeof(T1));
-//     cudaMalloc((void**)&s->hb, p->hidden_dim * sizeof(T1));
-//     cudaMalloc((void**)&s->hb2, p->hidden_dim * sizeof(T1));
-//     cudaMalloc((void**)&s->q, p->dim * sizeof(T1));
-//     cudaMalloc((void**)&s->att, p->n_heads * p->dim * sizeof(T1));
-//     cudaMalloc((void**)&s->logits, p->vocab_size * sizeof(T1));
-//     cudaMalloc((void**)&s->key_cache, p->n_layers * p->seq_len * kv_dim * sizeof(T1));    // potentially huge allocs
-//     cudaMalloc((void**)&s->value_cache, p->n_layers * p->seq_len * kv_dim * sizeof(T1));
-   
-//     cudaMalloc((void**)&s->pos, sizeof(int));
-//     cudaMallocHost((void**)&s->shared_data, sizeof(SharedData));
-
-//     // ensure all mallocs went fine
-//     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-//         || !s-> att || !s->key_cache
-//         || !s->value_cache || !s->logits) {
-//         printf("malloc failed!\n");
-//         exit(1);
-//     }
-// }
-
 
 template<typename T1, typename T2>
 void free_run_state(RunState<T1, T2>* s) {
@@ -917,48 +882,6 @@ void malloc_weights(TransformerWeights<T>* w, Config* p, int shared_weights) {
         exit(1);
     }
 }
-// template<typename T>
-// void malloc_weights(TransformerWeights<T>* w, Config* p, int shared_weights) {
-//     /**
-//      * Function to allocate device memory for TransformerWeights struct 
-//      *
-//      * @param   w          Address of TransformerWeights struct 
-//      * @param   p          Address of Config struct 
-//      * @param   shared_weights    Indicator of whether weights are shared 
-//      *
-//      * @tparam  T1         Data type of device params
-//      * @tparam  T2         Data type of host params
-//      */
-//     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
-//     cudaMalloc((void**)&w->token_embedding_table, p->vocab_size * p->dim * sizeof(T));
-//     w->layers = (PerLayerWeight<T>*)malloc(p->n_layers * sizeof(PerLayerWeight<T>));
-//     w->num_layers = p->n_layers;
-//     for (int l = 0; l < p->n_layers; l++)
-//     {
-//         PerLayerWeight<T>* layer = &(w->layers[l]);
-//         cudaMalloc((void**)&layer->rms_att_weight, p->dim * sizeof(T));
-//         cudaMalloc((void**)&layer->rms_att_weight, p->dim * sizeof(T));
-//         cudaMalloc((void**)&layer->rms_ffn_weight, p->dim * sizeof(T));
-//         cudaMalloc((void**)&layer->wq, p->dim * p->dim * sizeof(T));
-//         cudaMalloc((void**)&layer->wk, p->n_layers * p->dim * kv_dim * sizeof(T));
-//         cudaMalloc((void**)&layer->wv, p->n_layers * p->dim * kv_dim * sizeof(T));
-//         cudaMalloc((void**)&layer->wo, p->n_layers * p->dim * p->dim * sizeof(T));
-//         cudaMalloc((void**)&layer->wgate, p->n_layers * p->hidden_dim * p->dim * sizeof(T));
-//         cudaMalloc((void**)&layer->wup, p->n_layers * p->dim * p->hidden_dim * sizeof(T));
-//         cudaMalloc((void**)&layer->wdown, p->n_layers * p->hidden_dim * p->dim * sizeof(T));
-//     }
-        
-//     cudaMalloc((void**)&w->rms_final_weight, p->dim * sizeof(half));
-//     cudaMalloc((void**)&w->wcls, p->vocab_size * p->dim * sizeof(half));
-
-   
-//     // ensure all mallocs went fine
-//     if (!w->token_embedding_table || !w->layers||
-//         !w->rms_final_weight || !w->wcls) {
-//         printf("malloc failed!\n");
-//         exit(1);
-//     }
-// }
 
 template<typename T>
 void free_weights(TransformerWeights<T>* w, int shared_weights) {
@@ -1579,27 +1502,6 @@ float random_f32(unsigned long rng_seed) { // random float32 in [0,1)
     return (random_u32(rng_seed) >> 8) / 16777216.0f;
 }
 
-// int sample(float* probabilities, int n, unsigned long rng_seed) {
-//     /**
-//      * Utility Function to sample index from probabilities, they must sum to 1
-//      *
-//      * @param   probabilities           pointer to the probabilities 
-//      * @param   n                       Range of numbers to sample from  
-//      * @param   rng_seed                Random seed for random number generation 
-//      */
-
-    
-//     float r = random_f32(rng_seed);
-//     float cdf = 0.0f;
-//     for (int i = 0; i < n; i++) {
-//         cdf += probabilities[i];
-//         if (r < cdf) {
-//             return i;
-//         }
-//     }
-//     return n - 1; // in case of rounding errors
-// }
-
 int argmax(float* v, int n) {
      /**
      * Utility Function that returns argmax of v in elements 0..n
@@ -1841,53 +1743,52 @@ TransformerWeights<T1>* weights, RunState<T1, T2>* state, int shared_weights, in
     Sleep(1000);
 }
 
+int run_inference_fp16(char* checkpoint, char* prompt, float temperature, float topp, int steps, unsigned long rng_seed, int weight_quant_num, int fusedMHA){
+    /**
+     * Function to load config, model and tokenizer, and then generate tokens with param precision 'half (fp16)' on deivce 
 
-// int run_inference_fp16(char* checkpoint, char* prompt, float temperature, float topp, int steps, unsigned long rng_seed, int weight_quant_num, int fusedMHA){
-//     /**
-//      * Function to load config, model and tokenizer, and then generate tokens with param precision 'half (fp16)' on deivce 
+     * @param   checkpoint              pointer to the filename of the checkpoint e.g. Model.bin
+     * @param   prompt                  pointer to prompt chars
+     * @param   temperature             Softmax temperature parameter
+     * @param   state                   templated RunState struct for different precision
+     * @param   weights                 templated TransformerWeights struct for different precision 
+     * @param   config                  config Struct 
+     * @param   shared_weights          Indicator of whether weights are shared
+     * @param   rng_seed                Used to generate random number 
+     * @param   weight_quant_num        Indicator of param precision on device, currently supporting 0 for full precision, 1 for half precision (default)
+     * 
+     * @tparam  T1                      Data type for params on device  
+     * @tparam  T2                      Data type for params on host 
+     */
+    Config config;
+    TransformerWeights<half> weights;
+    RunState<half, float> state;
+    Sampler sampler;
+    FILE* file = load_checkpoint(checkpoint);
+    char default_tokenizer_path[] = "tokenizer.bin";
 
-//      * @param   checkpoint              pointer to the filename of the checkpoint e.g. Model.bin
-//      * @param   prompt                  pointer to prompt chars
-//      * @param   temperature             Softmax temperature parameter
-//      * @param   state                   templated RunState struct for different precision
-//      * @param   weights                 templated TransformerWeights struct for different precision 
-//      * @param   config                  config Struct 
-//      * @param   shared_weights          Indicator of whether weights are shared
-//      * @param   rng_seed                Used to generate random number 
-//      * @param   weight_quant_num        Indicator of param precision on device, currently supporting 0 for full precision, 1 for half precision (default)
-//      * 
-//      * @tparam  T1                      Data type for params on device  
-//      * @tparam  T2                      Data type for params on host 
-//      */
-//     Config config;
-//     TransformerWeights<half> weights;
-//     RunState<half, float> state;
-//     Sampler sampler;
-//     FILE* file = load_checkpoint(checkpoint);
-//     char default_tokenizer_path[] = "tokenizer.bin";
+    // read in the config header
+    if (load_config(file, &config)) {printf("load config failed\n"); Sleep(1000); return 1;}
+    // negative vocab size is hacky way of signaling unshared weights. bit yikes.
+    int shared_weights = config.vocab_size > 0 ? 1 : 0;
+    // build the Sampler    
+    config.vocab_size = abs(config.vocab_size);
+    build_sampler(&sampler, config.vocab_size, temperature, topp, rng_seed);
 
-//     // read in the config header
-//     if (load_config(file, &config)) {printf("load config failed\n"); Sleep(1000); return 1;}
-//     // negative vocab size is hacky way of signaling unshared weights. bit yikes.
-//     int shared_weights = config.vocab_size > 0 ? 1 : 0;
-//     // build the Sampler    
-//     config.vocab_size = abs(config.vocab_size);
-//     build_sampler(&sampler, config.vocab_size, temperature, topp, rng_seed);
-
-//     // read in the Transformer weights
-//     if (load_weights(file, &config, &weights, shared_weights, weight_quant_num)) {printf("load weights failed \n"); Sleep(1000); return 1;}
-//     fclose(file);
+    // read in the Transformer weights
+    if (load_weights(file, &config, &weights, shared_weights, weight_quant_num)) {printf("load weights failed \n"); Sleep(1000); return 1;}
+    fclose(file);
  
-//     // right now we cannot run for more than config.seq_len steps
-//     if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
-//     Tokenizer tokenizer;
-//     build_tokenizer(&tokenizer, default_tokenizer_path, config.vocab_size);
-//     // create and init the application RunState
-//     malloc_run_state(&state, &config);
-//     generate_tokens(prompt, checkpoint, steps, &tokenizer, &sampler, &config, &weights, &state, shared_weights, weight_quant_num, fusedMHA, rng_seed);
+    // right now we cannot run for more than config.seq_len steps
+    if (steps <= 0 || steps > config.seq_len) { steps = config.seq_len; }
+    Tokenizer tokenizer;
+    build_tokenizer(&tokenizer, default_tokenizer_path, config.vocab_size);
+    // create and init the application RunState
+    malloc_run_state(&state, &config);
+    generate_tokens(prompt, checkpoint, steps, &tokenizer, &sampler, &config, &weights, &state, shared_weights, weight_quant_num, fusedMHA, rng_seed);
    
-//     return 0;
-// }
+    return 0;
+}
 
 int run_inference_fp32(char* checkpoint, char* prompt, float temperature, float topp, int steps, unsigned long rng_seed, int weight_quant_num, int fusedMHA){
     /**

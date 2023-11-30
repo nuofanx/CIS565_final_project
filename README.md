@@ -140,7 +140,7 @@ Concerning the parallelization of multihead attention, column parallelization, a
     - For example, double buffering, for better interleaving of computation and memory loading. For now, see CUTLASS Pipelining. In CUTLASS, double buffering is done on two levels: GMEM ⇒ SMEM, and SMEM ⇒ Registerfile.
 
 2. More efficient implementation of multihead attention 
-    - better usage of kernel fusion - attemped in llama2_fused.cu but not fully debugged.
+    - better usage of kernel fusion - kernel fusion was attemped in llama2_fused.cu but the code has not yet been fully debugged. The main problem is that cub library seem to not provide full support for operations in half data type, and consequently sorting and picking the top p probabiltiies in sampling becomes challenging. The fused multihead attention kernel and other kernels were successfully implemented.  
 
 3. weight quantization for less memory and computing requirement 
     - Currently: float16 are used for storage but calculations are done in full precision float32. Although it might cause minimal loss in accuracy, compared to float32, it reduces model size by up to half. As the architecture is identical, you can also load and inference Meta's Llama 2 models. However, the current code only inferences models in fp32, so you will most likely not be able to productively load models larger than 7B. 
