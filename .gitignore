@@ -1,4 +1,2 @@
-build/*
-benchmark_results/*
 *.png
 *M.bin
