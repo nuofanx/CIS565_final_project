@@ -1,6 +1,4 @@
-# ignore vscode files
-.vscode/
-texts/
-nonsquare*/
-matvec_run.cu
-src/matvecmul*
+build/*
+benchmark_results/*
+*.png
+*M.bin
