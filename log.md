@@ -136,5 +136,3 @@ Bug fixes:
 
 # Changes (until Dec.1)
 1. Recovered log.md that was accidentally deleted. 
-
-# Changes (until Nov.29)
